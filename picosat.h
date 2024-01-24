@@ -49,6 +49,28 @@ IN THE SOFTWARE.
 
 /*------------------------------------------------------------------------*/
 
+/*------------------------------------------------------------------------*/
+/* Global variables for configurability
+ */
+enum Phase
+{
+ POSPHASE,
+ NEGPHASE,
+ JWLPHASE,
+ RNDPHASE,
+};
+
+static enum Phase GLOBAL_DEFAULT_PHASE = 0;
+static int ALLSAT = 0;
+static int PARTIAL = 0;
+static int PLAIN = 0;
+static const char * COMPACT_TRACE_NAME = 0;
+static const char * EXTENDED_TRACE_NAME = 0;
+static const char * RUP_TRACE_NAME = 0;
+static FILE * INCREMENTAL_RUP_FILE = 0;
+
+/*------------------------------------------------------------------------*/
+
 typedef struct PicoSAT PicoSAT;
 
 /*------------------------------------------------------------------------*/

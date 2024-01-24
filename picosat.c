@@ -508,24 +508,15 @@ enum State
   UNKNOWN = 4,
 };
 
-enum Phase
-{
-  POSPHASE,
-  NEGPHASE,
-  JWLPHASE,
-  RNDPHASE,
-};
 
 struct PicoSAT 
 {
   enum State state;
-  enum Phase defaultphase;
   int last_sat_call_result;
 
   FILE *out;
   char * prefix;
   int verbosity;
-  int plain;
   unsigned LEVEL;
   unsigned max_var;
   unsigned size_vars;
@@ -572,7 +563,6 @@ struct PicoSAT
   Zhn **zhains, **zhead, **eoz;
   int ocore;
 #endif
-  FILE * rup;
   int rupstarted;
   int rupvariables;
   int rupclauses;
@@ -1196,7 +1186,7 @@ init (void * pmgr,
 
   ps->size_vars = 1;
   ps->state = RESET;
-  ps->defaultphase = JWLPHASE;
+  GLOBAL_DEFAULT_PHASE = JWLPHASE;
 #ifdef TRACE
   ps->ocore = -1;
 #endif
@@ -1245,7 +1235,7 @@ init (void * pmgr,
 #endif
   new_prefix (ps, "c ");
   ps->verbosity = 0;
-  ps->plain = 0;
+  PLAIN = 0;
 
 #ifdef NO_BINARY_CLAUSES
   memset (&ps->impl, 0, sizeof (ps->impl));
@@ -1278,7 +1268,7 @@ init (void * pmgr,
            "set output \"/tmp/picosat-viscores/gif/animated.gif\"\n");
 #endif
 #endif
-  ps->defaultphase = JWLPHASE;
+  GLOBAL_DEFAULT_PHASE = JWLPHASE;
   ps->state = READY;
   ps->last_sat_call_result = 0;
 
@@ -2435,11 +2425,11 @@ REENTER:
       assert (ps->lhead != ps->oclauses);		/* ditto */
     }
 
-  if (learned && ps->rup)
+  if (learned && INCREMENTAL_RUP_FILE)
     {
       if (!ps->rupstarted)
 	{
-	  write_rup_header (ps, ps->rup);
+	  write_rup_header (ps, INCREMENTAL_RUP_FILE);
 	  ps->rupstarted = 1;
 	}
     }
@@ -2452,8 +2442,8 @@ REENTER:
       lit = *p;
       *q++ = lit;
 
-      if (learned && ps->rup)
-	fprintf (ps->rup, "%d ", LIT2INT (lit));
+      if (learned && INCREMENTAL_RUP_FILE)
+	fprintf (INCREMENTAL_RUP_FILE, "%d ", LIT2INT (lit));
 
       val = lit->val;
 
@@ -2463,8 +2453,8 @@ REENTER:
     }
   assert (num_false + num_true + num_undef == size);
 
-  if (learned && ps->rup)
-    fputs ("0\n", ps->rup);
+  if (learned && INCREMENTAL_RUP_FILE)
+    fputs ("0\n", INCREMENTAL_RUP_FILE);
 
   ps->ahead = ps->added;		/* reset */
 
@@ -5045,7 +5035,7 @@ faillits (PS * ps)
   int new_trail_count;
   double started;
 
-  if (ps->plain)
+  if (PLAIN)
     return;
 
   if (ps->heap + 1 >= ps->hhead)
@@ -5683,16 +5673,16 @@ decide_phase (PS * ps, Lit * lit)
 #ifdef STATS
       ps->staticphasedecisions++;
 #endif
-      if (ps->defaultphase == POSPHASE)
+      if (GLOBAL_DEFAULT_PHASE == POSPHASE)
 	{
 	  /* assign to TRUE */
 	}
-      else if (ps->defaultphase == NEGPHASE)
+      else if (GLOBAL_DEFAULT_PHASE == NEGPHASE)
 	{
 	  /* assign to FALSE */
 	  lit = not_lit;
 	}
-      else if (ps->defaultphase == RNDPHASE)
+      else if (GLOBAL_DEFAULT_PHASE == RNDPHASE)
 	{
 	  /* randomly assign default phase */
 	  if (rrng (ps, 1, 2) != 2)
@@ -6779,7 +6769,7 @@ void
 picosat_set_plain (PS * ps, int new_plain_value)
 {
   check_ready (ps);
-  ps->plain = new_plain_value;
+  PLAIN = new_plain_value;
 }
 
 int
@@ -6800,7 +6790,6 @@ picosat_set_incremental_rup_file (PS * ps, FILE * rup_file, int m, int n)
 {
   check_ready (ps);
   assert (!ps->rupstarted);
-  ps->rup = rup_file;
   ps->rupvariables = m;
   ps->rupclauses = n;
 }
@@ -6851,7 +6840,7 @@ picosat_add (PS * ps, int int_lit)
   else
     check_ready (ps);
 
-  ABORTIF (ps->rup && ps->rupstarted && ps->oadded >= (unsigned)ps->rupclauses,
+  ABORTIF (INCREMENTAL_RUP_FILE && ps->rupstarted && ps->oadded >= (unsigned)ps->rupclauses,
            "API usage: adding too many clauses after RUP header written");
 #ifndef NADC
   ABORTIF (ps->addingtoado, 
@@ -8338,7 +8327,7 @@ picosat_set_global_default_phase (PS * ps, int phase)
                       "with negative argument");
   ABORTIF (phase > 3, "API usage: 'picosat_set_global_default_phase' "
                       "with argument > 3");
-  ps->defaultphase = phase;
+  GLOBAL_DEFAULT_PHASE = phase;
 }
 
 void
