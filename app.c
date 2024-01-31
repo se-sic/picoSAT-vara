@@ -27,7 +27,6 @@ static char ** sargv;
 static char buffer[100];
 static char *bhead = buffer;
 static const char *eob = buffer + 80;
-static FILE * incremental_rup_file;
 static signed char * sol;
 
 extern void picosat_enter (PicoSAT *);
@@ -110,8 +109,8 @@ INVALID_HEADER:
 
   picosat_adjust (picosat, vars);
 
-  if (incremental_rup_file)
-    picosat_set_incremental_rup_file (picosat, incremental_rup_file, vars, clauses);
+  if (INCREMENTAL_RUP_FILE)
+    picosat_set_incremental_rup_file (picosat, INCREMENTAL_RUP_FILE, vars, clauses);
 
   lit = 0;
 READ_LITERAL:
@@ -519,8 +518,7 @@ int
 picosat_main (int argc, char **argv)
 {
   int res, done, err, print_satisfying_assignment, force, print_formula;
-  const char *compact_trace_name, *extended_trace_name, * rup_trace_name;
-  int assumption, assumptions, defaultphase, allsat, partial, plain;
+  int assumption, assumptions;
   const char * clausal_core_name, * variable_core_name;
   const char *input_name, *output_name;
   const char * failed_assumptions_name;
@@ -542,10 +540,10 @@ picosat_main (int argc, char **argv)
   variable_core_name = 0;
   failed_assumptions_name = 0;
   output_name = 0;
-  compact_trace_name = 0;
-  extended_trace_name = 0;
-  rup_trace_name = 0;
-  incremental_rup_file = 0;
+  COMPACT_TRACE_NAME = 0;
+  EXTENDED_TRACE_NAME = 0;
+  RUP_TRACE_NAME = 0;
+  INCREMENTAL_RUP_FILE = 0;
   close_input = 0;
   pclose_input = 0;
   input_name = "<stdin>";
@@ -555,13 +553,13 @@ picosat_main (int argc, char **argv)
   done = err = 0;
   decision_limit = -1;
   propagation_limit = -1;
-  defaultphase = 2;
+  GLOBAL_DEFAULT_PHASE = 2;
   assumptions = 0;
   force = 0;
-  allsat = 0;
-  partial = 0;
+  ALLSAT = 0;
+  PARTIAL = 0;
   trace = 0;
-  plain = 0;
+  PLAIN = 0;
   seed = 0;
   sols= 0;
 
@@ -593,7 +591,7 @@ picosat_main (int argc, char **argv)
 	}
       else if (!strcmp (argv[i], "--plain"))
 	{
-	  plain = 1;
+	  PLAIN = 1;
 	}
       else if (!strcmp (argv[i], "-f"))
 	{
@@ -605,7 +603,7 @@ picosat_main (int argc, char **argv)
 	}
       else if (!strcmp (argv[i], "--partial"))
 	{
-	  partial = 1;
+	  PARTIAL = 1;
 	}
       else if (!strcmp (argv[i], "-p"))
 	{
@@ -657,7 +655,7 @@ picosat_main (int argc, char **argv)
 	    }
 	  else if (!argv[i][1] && ('0' <= argv[i][0] && argv[i][0] <= '3'))
 	    {
-	      defaultphase = argv[i][0] - '0';
+	      GLOBAL_DEFAULT_PHASE = argv[i][0] - '0';
 	    }
 	  else
 	    {
@@ -686,7 +684,7 @@ picosat_main (int argc, char **argv)
 	}
       else if (!strcmp (argv[i], "--all"))
 	{
-	  allsat = 1;
+	  ALLSAT = 1;
 	}
       else if (!strcmp (argv[i], "-s"))
 	{
@@ -728,12 +726,12 @@ picosat_main (int argc, char **argv)
 	}
       else if (!strcmp (argv[i], "-t"))
 	{
-	  if (compact_trace_name)
+	  if (COMPACT_TRACE_NAME)
 	    {
 	      fprintf (output,
 		       "*** picosat: "
 		       "multiple compact trace files '%s' and '%s'\n",
-		       compact_trace_name, argv[i]);
+		       COMPACT_TRACE_NAME, argv[i]);
 	      err = 1;
 	    }
 	  else if (++i == argc)
@@ -743,18 +741,18 @@ picosat_main (int argc, char **argv)
 	    }
 	  else
 	    {
-	      compact_trace_name = argv[i];
+	      COMPACT_TRACE_NAME = argv[i];
 	      trace = 1;
 	    }
 	}
       else if (!strcmp (argv[i], "-T"))
 	{
-	  if (extended_trace_name)
+	  if (EXTENDED_TRACE_NAME)
 	    {
 	      fprintf (output,
 		       "*** picosat: "
 		       "multiple extended trace files '%s' and '%s'\n",
-		       extended_trace_name, argv[i]);
+		       EXTENDED_TRACE_NAME, argv[i]);
 	      err = 1;
 	    }
 	  else if (++i == argc)
@@ -764,18 +762,18 @@ picosat_main (int argc, char **argv)
 	    }
 	  else
 	    {
-	      extended_trace_name = argv[i];
+	      EXTENDED_TRACE_NAME = argv[i];
 	      trace = 1;
 	    }
 	}
       else if (!strcmp (argv[i], "-r"))
 	{
-	  if (rup_trace_name)
+	  if (RUP_TRACE_NAME)
 	    {
 	      fprintf (output,
 		       "*** picosat: "
 		       "multiple RUP trace files '%s' and '%s'\n",
-		       rup_trace_name, argv[i]);
+		       RUP_TRACE_NAME, argv[i]);
 	      err = 1;
 	    }
 	  else if (++i == argc)
@@ -785,18 +783,18 @@ picosat_main (int argc, char **argv)
 	    }
 	  else
 	    {
-	      rup_trace_name = argv[i];
+	      RUP_TRACE_NAME = argv[i];
 	      trace = 1;
 	    }
 	}
       else if (!strcmp (argv[i], "-R"))
 	{
-	  if (rup_trace_name)
+	  if (RUP_TRACE_NAME)
 	    {
 	      fprintf (output,
 		       "*** picosat: "
 		       "multiple RUP trace files '%s' and '%s'\n",
-		       rup_trace_name, argv[i]);
+		       RUP_TRACE_NAME, argv[i]);
 	      err = 1;
 	    }
 	  else if (++i == argc)
@@ -812,8 +810,8 @@ picosat_main (int argc, char **argv)
 	    }
 	  else
 	    {
-	      rup_trace_name = argv[i];
-	      incremental_rup_file = file;
+	      RUP_TRACE_NAME = argv[i];
+	      INCREMENTAL_RUP_FILE = file;
 	    }
 	}
       else if (!strcmp (argv[i], "-c"))
@@ -943,7 +941,7 @@ picosat_main (int argc, char **argv)
 	}
     }
 
-  if (allsat && partial)
+  if (ALLSAT && PARTIAL)
     {
       fprintf (output,
 	       "*** picosat: can not combine '--all' and '--partial'");
@@ -980,7 +978,6 @@ picosat_main (int argc, char **argv)
 	picosat_set_output (picosat, output);
 
       picosat_set_verbosity (picosat, verbose);
-      picosat_set_plain (picosat, plain);
 
       if (verbose) fputs ("c\n", output);
 
@@ -991,11 +988,10 @@ picosat_main (int argc, char **argv)
 	  picosat_enable_trace_generation (picosat);
 	}
 
-      if (defaultphase)
+      if (GLOBAL_DEFAULT_PHASE)
 	{
 	  if (verbose)
-	    fprintf (output, "c using %d as default phase\n", defaultphase);
-	  picosat_set_global_default_phase (picosat, defaultphase);
+	    fprintf (output, "c using %d as default phase\n", GLOBAL_DEFAULT_PHASE);
 	}
 
       if (propagation_limit >= 0)
@@ -1007,7 +1003,7 @@ picosat_main (int argc, char **argv)
 	    (unsigned long long) propagation_limit);
 	}
 
-      if (partial) 
+      if (PARTIAL)
 	{
 	  if (verbose)
 	    fprintf (output, 
@@ -1070,28 +1066,28 @@ NEXT_SOLUTION:
 	      if (res == PICOSAT_UNSATISFIABLE)
 		{
 
-		  if (allsat)
+		  if (ALLSAT)
 		    fprintf (output, "s SOLUTIONS %lld\n", sols);
 		  else
 		    fputs ("s UNSATISFIABLE\n", output);
 
 		  fflush (output);
 
-		  if (compact_trace_name)
+		  if (COMPACT_TRACE_NAME)
 		    write_to_file (picosat,
-		                   compact_trace_name,
+		                   COMPACT_TRACE_NAME,
 				   "compact trace", 
 				   picosat_write_compact_trace);
 
-		  if (extended_trace_name)
+		  if (EXTENDED_TRACE_NAME)
 		    write_to_file (picosat,
-		                   extended_trace_name,
+		                   EXTENDED_TRACE_NAME,
 				   "extended trace", 
 				   picosat_write_extended_trace);
 
-		  if (!incremental_rup_file && rup_trace_name)
+		  if (!INCREMENTAL_RUP_FILE && RUP_TRACE_NAME)
 		    write_to_file (picosat,
-		                   rup_trace_name,
+		                   RUP_TRACE_NAME,
 				   "rup trace", 
 				   picosat_write_rup_trace);
 
@@ -1115,23 +1111,23 @@ NEXT_SOLUTION:
 		}
 	      else if (res == PICOSAT_SATISFIABLE)
 		{
-	          if (allsat)
+	          if (ALLSAT)
 		    {
 		      sols++;
 		      if (verbose)
 			fprintf (output, "c\nc solution %lld\nc\n", sols);
 		    }
 
-		  if (!allsat || print_satisfying_assignment)
+		  if (!ALLSAT || print_satisfying_assignment)
 		    fputs ("s SATISFIABLE\n", output);
 
-		  if (!allsat || verbose || print_satisfying_assignment)
+		  if (!ALLSAT || verbose || print_satisfying_assignment)
 		    fflush (output);
 
 		  if (print_satisfying_assignment)
-		    printa (picosat, partial);
+		    printa (picosat, PARTIAL);
 
-		  if (allsat)
+		  if (ALLSAT)
 		    {
 		      blocksol (picosat);
 		      goto NEXT_SOLUTION;
@@ -1141,7 +1137,7 @@ NEXT_SOLUTION:
 		{
 		  fputs ("s UNKNOWN\n", output);
 
-		  if (allsat && verbose)
+		  if (ALLSAT && verbose)
 		    fprintf (output,
 			     "c\nc limit reached after %lld solutions\n",
 			     sols);
@@ -1176,8 +1172,8 @@ NEXT_SOLUTION:
       picosat_reset (picosat);
     }
 
-  if (incremental_rup_file)
-    fclose (incremental_rup_file);
+  if (INCREMENTAL_RUP_FILE)
+    fclose (INCREMENTAL_RUP_FILE);
 
   if (close_input)
     fclose (input);
