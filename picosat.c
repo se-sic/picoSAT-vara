@@ -1186,7 +1186,6 @@ init (void * pmgr,
 
   ps->size_vars = 1;
   ps->state = RESET;
-  GLOBAL_DEFAULT_PHASE = JWLPHASE;
 #ifdef TRACE
   ps->ocore = -1;
 #endif
@@ -1235,7 +1234,6 @@ init (void * pmgr,
 #endif
   new_prefix (ps, "c ");
   ps->verbosity = 0;
-  PLAIN = 0;
 
 #ifdef NO_BINARY_CLAUSES
   memset (&ps->impl, 0, sizeof (ps->impl));
@@ -1268,7 +1266,6 @@ init (void * pmgr,
            "set output \"/tmp/picosat-viscores/gif/animated.gif\"\n");
 #endif
 #endif
-  GLOBAL_DEFAULT_PHASE = JWLPHASE;
   ps->state = READY;
   ps->last_sat_call_result = 0;
 
