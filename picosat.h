@@ -67,7 +67,7 @@ static __attribute__((feature_variable("Plain"))) int PLAIN = 0;
 static __attribute__((feature_variable("CompactTrace"))) const char * COMPACT_TRACE_NAME = 0;
 static __attribute__((feature_variable("ExtendedTrace"))) const char * EXTENDED_TRACE_NAME = 0;
 static __attribute__((feature_variable("RUPTrace"))) const char * RUP_TRACE_NAME = 0;
-static __attribute__((feature_variable("IncrementalRUPTrace"))) FILE * INCREMENTAL_RUP_FILE = 0;
+static FILE * INCREMENTAL_RUP_FILE = 0;
 
 /*------------------------------------------------------------------------*/
 
