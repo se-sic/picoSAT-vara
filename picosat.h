@@ -62,7 +62,7 @@ enum Phase
 
 static __attribute__((feature_variable("DefaultPhase"))) enum Phase GLOBAL_DEFAULT_PHASE = 0;
 static __attribute__((feature_variable("AllSat"))) int ALLSAT = 0;
-static __attribute__((feature_variable("Partial"))) int PARTIAL = 0;
+static int PARTIAL = 0;
 static __attribute__((feature_variable("Plain"))) int PLAIN = 0;
 static __attribute__((feature_variable("CompactTrace"))) const char * COMPACT_TRACE_NAME = 0;
 static __attribute__((feature_variable("ExtendedTrace"))) const char * EXTENDED_TRACE_NAME = 0;
