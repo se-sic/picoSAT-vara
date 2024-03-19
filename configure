@@ -1,6 +1,6 @@
 #!/bin/sh
 
-satcompetition=yes
+satcompetition=no
 
 log=no
 debug=no
@@ -8,6 +8,7 @@ optimize=no
 stats=undefined
 trace=undefined
 static=yes
+shared=no
 thirtytwobit=no
 static=no
 
@@ -35,7 +36,8 @@ where <option> is one of the following:
   --no-stats           disable expensive stats
   --no-trace           enable trace generation (less memory)
   -32|--32|-m32        compile for 32 bit machine even on 64 bit host
-  -static|--static     force static compilation
+  -static|--static     only produce static library
+  -shared|--shared     produce shared library as well
   -O                   optimize a lot and disable trace generation
 EOF
 exit 1
@@ -53,6 +55,8 @@ then
   stats=no
   trace=no
   thirtytwobit=yes
+  static=yes
+  shared=no
 fi
 
 echo "debug ... $debug"
@@ -81,9 +85,11 @@ then
 fi
 echo "trace ... $trace"
 
-echo -n "cc ..."
+echo "static ... $static"
+
+echo "shared ... $shared"
+
 [ "X$CC" = X ] && CC=gcc
-echo " $CC"
 
 if [ X"$CFLAGS" = X ]
 then
@@ -99,10 +105,6 @@ then
     X*gcc*)
       CFLAGS="$CFLAGS -Wall -Wextra"
       [ $thirtytwobit = yes ] && CFLAGS="$CFLAGS -m32"
-      if [ $satcompetition = yes ]
-      then
-        CFLAGS="$CFLAGS -static"
-      fi
       if [ $debug = yes ]
       then
         CFLAGS="$CFLAGS -g3 -ggdb"
@@ -127,9 +129,23 @@ then
   esac
 fi
 
+TARGETS="picosat picomus libpicosat.a"
+if [ $shared = yes ]
+then
+  TARGETS="$TARGETS libpicosat.so"
+  CFLAGS="$CFLAGS -fPIC"
+fi
+echo "targets ... $TARGETS"
+
+echo "cc ... $CC"
+
 echo "cflags ... $CFLAGS"
 
 echo -n "makefile ..."
 rm -f makefile
-sed -e "s;@CC@;$CC;" -e "s;@CFLAGS@;$CFLAGS;" makefile.in > makefile
+sed \
+  -e "s;@CC@;$CC;" \
+  -e "s;@CFLAGS@;$CFLAGS;" \
+  -e "s;@TARGETS@;$TARGETS;" \
+makefile.in > makefile
 echo " done"

@@ -1,5 +1,5 @@
 /****************************************************************************
-Copyright (c) 2006 - 2009, Armin Biere, Johannes Kepler University.
+Copyright (c) 2006 - 2010, Armin Biere, Johannes Kepler University.
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to
@@ -35,7 +35,6 @@ IN THE SOFTWARE.
 #define PICOSAT_UNKNOWN         0
 #define PICOSAT_SATISFIABLE     10
 #define PICOSAT_UNSATISFIABLE   20
-
 /*------------------------------------------------------------------------*/
 /* Global variables for configurability
  */
@@ -105,11 +104,10 @@ void picosat_set_verbosity (int new_verbosity_level);
 
 /* Set default initial phase:
  *
- *   negative = false
- *
- *   posivie  = true
- *
- *   0        = Jeroslow-Wang (default)
+ *   0 = false
+ *   1 = true
+ *   2 = Jeroslow-Wang (default)
+ *   3 = random initial phase
  *
  * After a variable has been assigned the first time, it will always
  * be assigned the previous value if it is picked as decision variable.
@@ -132,6 +130,32 @@ void picosat_set_global_default_phase (int);
  * used as decision variable.
  */
 void picosat_set_default_phase_lit (int lit, int phase);
+
+/* You can reset all phases by the following function.
+ */
+void picosat_reset_phases (void);
+
+/* Scores can be erased as well.  Not however, that even after erasing 
+ * scores and phases, learned clauses are kept.  In addition head tail
+ * pointers for literals are not moved either.  So expect to be a difference
+ * between calling the solver in incremental mode or with a fresh copy of
+ * the CNF.
+ */
+void picosat_reset_scores (void);
+
+/* Reset assignment if in SAT state and then remove the given percentage of
+ * less active (large) learned clauses.  If you specify 100% all large
+ * learned clauses are removed.
+ */
+void picosat_remove_learned (unsigned percentage);
+
+/* Set some variables to be more important than others.  These variables are
+ * always used as decisions before other variables are used.  Dually there
+ * is a set of variables that is used last.  The default is
+ * to mark all variables as being indifferent only.
+ */
+void picosat_set_more_important_lit (int lit);
+void picosat_set_less_important_lit (int lit);
 
 /* Allows to print to internal 'out' file from client.
  */
@@ -158,8 +182,11 @@ void picosat_set_seed (unsigned random_number_generator_seed);
  * configure picosat with full optimzation as './configure -O' or with
  * './configure --no-trace'.  This speeds up the solver slightly.  Then you
  * you do not get any results by trying to generate traces.
+ *
+ * The return value is non-zero if code for generating traces is including
+ * and it is zero if traces can not be generated.
  */
-void picosat_enable_trace_generation (void);
+int picosat_enable_trace_generation (void);
 
 /* You can dump proof traces in RUP format incrementally even without
  * keeping the proof trace in memory.  The advantage is a reduction of
@@ -195,6 +222,7 @@ int picosat_added_original_clauses (void);              /* p cnf m <n> */
 size_t picosat_max_bytes_allocated (void);
 double picosat_time_stamp (void);                       /* ... in process */
 void picosat_stats (void);                              /* > output file */
+unsigned long long picosat_propagations (void);		/* #propagations */
 
 /* The time spent in the library or in 'picosat_sat'.  The former is only
  * returned if, right after initialization 'picosat_measure_all_calls'
@@ -205,9 +233,10 @@ double picosat_seconds (void);
 /*------------------------------------------------------------------------*/
 /* Add a literal of the next clause.  A zero terminates the clause.  The
  * solver is incremental.  Adding a new literal will reset the previous
- * assignment.
+ * assignment.   The return value is the original clause index to which
+ * this literal respectively the trailing zero belong starting at 0.
  */
-void picosat_add (int lit);
+int picosat_add (int lit);
 
 /* Print the CNF to the given file in DIMACS format.
  */
@@ -312,6 +341,15 @@ void picosat_add_ado_lit (int);
  */
 int picosat_sat (int decision_limit);
 
+/* As alternative to a decision limit you can use the number of propagations
+ * as limit.  This is more linearly related to execution time.
+ */
+void picosat_set_propagation_limit (unsigned long long limit);
+
+/* Return last result of calling 'picosat_sat' or '0' if not called.
+ */
+int picosat_res ();
+
 /* After 'picosat_sat' was called and returned 'PICOSAT_SATISFIABLE', then
  * the satisfying assignment can be obtained by 'dereferencing' literals.
  * The value of the literal is return as '1' for 'true',  '-1' for 'false'
@@ -336,10 +374,38 @@ int picosat_inconsistent  (void);
  * generating core literals, but still of course is an overapproximation of
  * the set of assumptions really necessary.  The technique does not need
  * clausal core generation nor tracing to be enabled and thus can be much
- * more effectice.  The function can only called as long the current
+ * more effectice.  The function can only be called as long the current
  * assumptions are valid.  See 'picosat_assume' for more details.
  */
 int picosat_failed_assumption (int lit);
+
+/* Returns a zero terminated list of failed assumption in the last call to
+ * 'picosat_sat'.  The pointer is valid until the next call to
+ * 'picosat_sat' or 'picosat_failed_assumptions'.  It only makes sense if the
+ * last call to 'picosat_sat' returned 'PICOSAT_UNSATISFIABLE'.
+ */
+const int * picosat_failed_assumptions (void);
+
+/* Returns a zero terminated minimized list of failed assumption for the last
+ * call to 'picosat_sat'.  The pointer is valid until the next call to this
+ * function or 'picosat_sat' or 'picosat_mus_assumptions'.  It only makes sense
+ * if the last call to 'picosat_sat' returned 'PICOSAT_UNSATISFIABLE'.
+ *
+ * The
+ * call back function is called for all succesful simplification attempts.  The
+ * first argument of the call back function is the state given as first
+ * argument to 'picosat_mus_assumptions'.  The second argument to the call back
+ * function is the new reduced list of failed assumptions.
+ *
+ * This function will call 'picosat_assume' and 'picosat_sat' internally but
+ * before returning reestablish a proper UNSAT state, e.g.
+ * 'picosat_failed_assumption' will work afterwards as expected.
+ *
+ * The last argument if non zero fixes assumptions.  In particular, if an
+ * assumption can not be removed it is permanently assigned true, otherwise
+ * if it turns out to be redundant it is permanently assumed to be false.
+ */
+const int * picosat_mus_assumptions (void *, void(*)(void*,const int*),int);
 
 /*------------------------------------------------------------------------*/
 /* Assume that a previous call to 'picosat_sat' in incremental usage,
@@ -364,7 +430,7 @@ int picosat_failed_assumption (int lit);
 int picosat_changed (void);
 
 /*------------------------------------------------------------------------*/
-/* The following five functions internally extract the variable and clausal
+/* The following six functions internally extract the variable and clausal
  * core and thus require trace generation to be enabled with
  * 'picosat_enable_trace_generation' right after calling 'picosat_init'.
  *
@@ -372,6 +438,15 @@ int picosat_changed (void);
  * has only been tested for 'picosat_corelit' thoroughly.  The others may
  * only work in non-incremental mode or without using 'picosat_assume'.
  */
+
+/* This function determines whether the i'th added original clause is in the
+ * core.  The 'i' is the return value of 'picosat_add', which starts at zero
+ * and is incremented by one after a original clause is added (that is after
+ * 'picosat_add (0)').  For the index 'i' the following has to hold: 
+ *
+ *   0 <= i < picosat_added_original_clauses ()
+ */
+int picosat_coreclause (int i);
 
 /* This function gives access to the variable core, which is made up of the
  * variables that were resolved in deriving the empty clauses.

@@ -1,7 +1,7 @@
 CC=@CC@
 CFLAGS=@CFLAGS@
 
-all: picosat libpicosat.a
+all: @TARGETS@
 
 clean:
 	rm -f picosat *.exe *.s *.o *.a *.so
@@ -11,7 +11,13 @@ clean:
 picosat: libpicosat.a app.o main.o
 	$(CC) $(CFLAGS) -o $@ main.o app.o -L. -lpicosat
 
+picomus: libpicosat.a picomus.o
+	$(CC) $(CFLAGS) -o $@ picomus.o -L. -lpicosat
+
 app.o: app.c picosat.h makefile
+	$(CC) $(CFLAGS) -c $<
+
+picomus.o: picomus.c picosat.h makefile
 	$(CC) $(CFLAGS) -c $<
 
 main.o: main.c picosat.h makefile
@@ -29,5 +35,9 @@ config.h: makefile VERSION mkconfig # and actually picosat.c
 libpicosat.a: picosat.o version.o
 	ar rc $@ picosat.o version.o
 	ranlib $@
+
+SONAME=-Xlinker -soname -Xlinker libpicosat.so
+libpicosat.so: picosat.o version.o
+	$(CC) $(CFLAGS) -shared -o $@ picosat.o version.o $(SONAME)
 
 .PHONY: all clean
