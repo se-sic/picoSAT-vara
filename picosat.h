@@ -59,6 +59,7 @@ enum Phase
 static __attribute__((feature_variable("DefaultPhase"))) enum Phase GLOBAL_DEFAULT_PHASE = 0;
 static __attribute__((feature_variable("AllSat"))) int ALLSAT = 0;
 static int PARTIAL = 0;
+static __attribute__((feature_variable("Plain"))) int PLAIN = 0;
 static __attribute__((feature_variable("CompactTrace"))) const char * COMPACT_TRACE_NAME = 0;
 static __attribute__((feature_variable("ExtendedTrace"))) const char * EXTENDED_TRACE_NAME = 0;
 static __attribute__((feature_variable("RUPTrace"))) const char * RUP_TRACE_NAME = 0;
@@ -126,6 +127,13 @@ void picosat_set_prefix (PicoSAT *, const char *);
  * by 'picosat_set_prefix'.
  */
 void picosat_set_verbosity (PicoSAT *, int new_verbosity_level);
+
+/* Disable/Enable all pre-processing, currently only failed literal probing.
+ *
+ *  new_plain_value != 0    only 'plain' solving, so no preprocessing
+ *  new_plain_value == 0    allow preprocessing
+ */
+void picosat_set_plain (PicoSAT *, int new_plain_value);
 
 /* Set default initial phase: 
  *
@@ -316,7 +324,7 @@ int picosat_add (PicoSAT *, int lit);
  * terminated with a zero literal.  Literals beyond the first zero literal
  * are discarded.
  */
-int picosat_add_arg (PicoSAT *, int lit, ...);
+int picosat_add_arg (PicoSAT *, ...);
 
 /* As the previous function but with an at compile time unknown size.
  */
@@ -451,10 +459,10 @@ int picosat_deref_toplevel (PicoSAT *, int lit);
 
 /* After 'picosat_sat' was called and returned 'PICOSAT_SATISFIABLE' a
  * partial satisfying assignment can be obtained as well.  It satisfies all
- * original clauses literals.  The value of the literal is return as '1' for
- * 'true',  '-1' for 'false' and '0' for an unknown value.  In order to make
- * this work all original clauses have to be saved internally, which has to
- * be enabled by 'picosat_save_original_clauses'.
+ * original clauses.  The value of the literal is return as '1' for 'true',
+ * '-1' for 'false' and '0' for an unknown value.  In order to make this
+ * work all original clauses have to be saved internally, which has to be
+ * enabled by 'picosat_save_original_clauses' right after initialization.
  */
 int picosat_deref_partial (PicoSAT *, int lit);
 

@@ -5163,6 +5163,9 @@ faillits (PS * ps)
   int new_trail_count;
   double started;
 
+  if (PLAIN)
+    return;
+
   if (ps->heap + 1 >= ps->hhead)
     return;
 
@@ -6884,6 +6887,13 @@ picosat_set_verbosity (PS * ps, int new_verbosity_level)
   ps->verbosity = new_verbosity_level;
 }
 
+void
+picosat_set_plain (PS * ps, int new_plain_value)
+{
+  check_ready (ps);
+  PLAIN = new_plain_value;
+}
+
 int
 picosat_enable_trace_generation (PS * ps)
 {
@@ -6984,6 +6994,28 @@ picosat_add (PS * ps, int int_lit)
   return res;
 }
 
+int
+picosat_add_arg (PS * ps, ...)
+{
+  int lit;
+  va_list ap;
+  va_start (ap, ps);
+  while ((lit = va_arg (ap, int)))
+    (void) picosat_add (ps, lit);
+  va_end (ap);
+  return picosat_add (ps, 0);
+}
+
+int
+picosat_add_lits (PS * ps, int * lits)
+{
+  const int * p;
+  int lit;
+  for (p = lits; (lit = *p); p++)
+    (void) picosat_add (ps, lit);
+  return picosat_add (ps, 0);
+}
+
 void
 picosat_add_ado_lit (PS * ps, int external_lit)
 {
@@ -7059,11 +7091,9 @@ pderef (PS * ps, int int_lit)
   Lit * lit;
   Var * v;
 
-  if (abs (int_lit) > (int) ps->max_var)
-    return 0;
+  assert (abs (int_lit) <= (int) ps->max_var);
 
   v = ps->vars + abs (int_lit);
-  
   if (!v->partial)
     return 0;
 
@@ -7089,6 +7119,7 @@ minautarky (PS * ps)
   npartial = 0;
 
   NEWN (occs, 2*ps->max_var + 1);
+  CLRN (occs, 2*ps->max_var + 1);
   occs += ps->max_var;
   for (p = ps->soclauses; p < ps->sohead; p++)
     occs[*p]++;
@@ -7103,6 +7134,10 @@ minautarky (PS * ps)
 	  val = pderef (ps, lit);
 	  if (val > 0)
 	    break;
+	  if (val < 0)
+	    continue;
+	  val = int2lit (ps, lit)->val;
+	  assert (val);
 	  if (val < 0)
 	    continue;
 	  tmpoccs = occs[lit];
@@ -7121,9 +7156,6 @@ minautarky (PS * ps)
 	}
       for (p = c; (lit = *p); p++)
 	{
-	  val = pderef (ps, lit);
-	  if (val)
-	    continue;
 	  assert (occs[lit] > 0);
 	  occs[lit]--;
 	}

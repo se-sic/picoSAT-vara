@@ -372,6 +372,7 @@ write_to_file (PicoSAT * picosat,
 "  -f           ignore invalid header\n" \
 "  -n           do not print satisfying assignment\n" \
 "  -p           print formula in DIMACS format and exit\n" \
+"  --plain      disable preprocessing (failed literal probing)\n" \
 "  -a <lit>     start with an assumption\n" \
 "  -l <limit>   set decision limit (no limit per default)\n" \
 "  -P <limit>   set propagation limit (no limit per default)\n" \
@@ -439,6 +440,7 @@ picosat_main (PicoSAT ** psptr, int argc, char **argv)
   ALLSAT = 0;
   PARTIAL = 0;
   trace = 0;
+  PLAIN = 0;
   seed = 0;
   sols= 0;
 
@@ -469,6 +471,10 @@ picosat_main (PicoSAT ** psptr, int argc, char **argv)
       else if (!strcmp (argv[i], "-v"))
 	{
 	  verbose++;
+	}
+      else if (!strcmp (argv[i], "--plain"))
+	{
+	  PLAIN = 1;
 	}
       else if (!strcmp (argv[i], "-f"))
 	{
@@ -834,6 +840,7 @@ picosat_main (PicoSAT ** psptr, int argc, char **argv)
 	picosat_set_output (picosat, output);
 
       picosat_set_verbosity (picosat, verbose);
+      picosat_set_plain (picosat, PLAIN);
 
       if (verbose) fputs ("c\n", output);
 
