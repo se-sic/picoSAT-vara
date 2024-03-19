@@ -29,6 +29,16 @@ IN THE SOFTWARE.
 #include <stdio.h>
 
 /*------------------------------------------------------------------------*/
+/* The following macros allows for users to distiguish between different
+ * versions of the API.  The first 'PICOSAT_REENTRANT_API' is defined for
+ * the new reentrant API which allows to generate multiple instances of
+ * PicoSAT in one process.  The second 'PICOSAT_API_VERSION' defines the
+ * (smallest) version of PicoSAT to which this API conforms.
+ */
+#define PICOSAT_REENTRANT_API
+#define PICOSAT_API_VERSION 953		/* API version */
+
+/*------------------------------------------------------------------------*/
 /* These are the return values for 'picosat_sat' as for instance
  * standardized by the output format of the SAT competition.
  */
@@ -37,8 +47,7 @@ IN THE SOFTWARE.
 #define PICOSAT_UNSATISFIABLE   20
 /*------------------------------------------------------------------------*/
 /* Global variables for configurability
-*/
-
+ */
 enum Phase
 {
  POSPHASE,

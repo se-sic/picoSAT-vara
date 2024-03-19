@@ -1,5 +1,7 @@
-news for release 953 since 951
+news for release 954 since 951
 ------------------------------
+
+* new '#define PICOSAT_REENTRANT_API' in 'picosat.h'
 
 * added manager so no more global variables
   (allows multiple instances, requires manager object)
