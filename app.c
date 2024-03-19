@@ -25,8 +25,8 @@ static const char *eob = buffer + 80;
 static FILE * incremental_rup_file;
 static signed char * sol;
 
-extern void picosat_enter (void);
-extern void picosat_leave (void);
+extern void picosat_enter (PicoSAT *);
+extern void picosat_leave (PicoSAT *);
 
 static int
 next (void)
@@ -39,7 +39,7 @@ next (void)
 }
 
 static const char *
-parse (int force)
+parse (PicoSAT * picosat, int force)
 {
   int ch, sign, lit, vars, clauses;
 
@@ -103,10 +103,10 @@ INVALID_HEADER:
       fflush (output);
     }
 
-  picosat_adjust (vars);
+  picosat_adjust (picosat, vars);
 
   if (incremental_rup_file)
-    picosat_set_incremental_rup_file (incremental_rup_file, vars, clauses);
+    picosat_set_incremental_rup_file (picosat, incremental_rup_file, vars, clauses);
 
   lit = 0;
 READ_LITERAL:
@@ -160,7 +160,7 @@ READ_LITERAL:
   else
     clauses--;
 
-  picosat_add (lit);
+  picosat_add (picosat, lit);
 
   goto READ_LITERAL;
 }
@@ -197,9 +197,9 @@ REENTER:
 }
 
 static void
-printa (int partial)
+printa (PicoSAT * picosat, int partial)
 {
-  int max_idx = picosat_variables (), i, lit, val;
+  int max_idx = picosat_variables (picosat), i, lit, val;
 
   assert (bhead == buffer);
 
@@ -207,12 +207,12 @@ printa (int partial)
     {
       if (partial)
 	{
-	  val = picosat_deref_partial (i);
+	  val = picosat_deref_partial (picosat, i);
 	  if (!val)
 	    continue;
 	}
       else
-	val = picosat_deref (i);
+	val = picosat_deref (picosat, i);
       lit = (val > 0) ? i : -i;
       printi (lit);
     }
@@ -223,9 +223,9 @@ printa (int partial)
 }
 
 static void
-blocksol (void)
+blocksol (PicoSAT * picosat)
 {
-  int max_idx = picosat_variables (), i;
+  int max_idx = picosat_variables (picosat), i;
 
   if (!sol)
     {
@@ -234,12 +234,12 @@ blocksol (void)
     }
 
   for (i = 1; i <= max_idx; i++)
-    sol[i] = (picosat_deref (i) > 0) ? 1 : -1;
+    sol[i] = (picosat_deref (picosat, i) > 0) ? 1 : -1;
 
   for (i = 1; i <= max_idx; i++)
-    picosat_add ((sol[i] < 0) ? i : -i);
+    picosat_add (picosat, (sol[i] < 0) ? i : -i);
 
-  picosat_add (0);
+  picosat_add (picosat, 0);
 }
 
 static int
@@ -253,11 +253,11 @@ has_suffix (const char *str, const char *suffix)
 }
 
 static void
-write_core_variables (FILE * file)
+write_core_variables (PicoSAT * picosat, FILE * file)
 {
-  int i, max_idx = picosat_variables (), count = 0;
+  int i, max_idx = picosat_variables (picosat), count = 0;
   for (i = 1; i <= max_idx; i++)
-    if (picosat_corelit (i))
+    if (picosat_corelit (picosat, i))
       {
 	fprintf (file, "%d\n", i);
 	count++;
@@ -294,16 +294,16 @@ next_assumption (int start)
 }
 
 static void
-write_failed_assumptions (FILE * file)
+write_failed_assumptions (PicoSAT * picosat, FILE * file)
 {
   int i, lit, count = 0;
 #ifndef NDEBUG
-  int max_idx = picosat_variables ();
+  int max_idx = picosat_variables (picosat);
 #endif
   i = 0;
   while ((i = next_assumption (i))) {
     lit = atoi (sargv[i]);
-    if (!picosat_failed_assumption (lit)) continue;
+    if (!picosat_failed_assumption (picosat, lit)) continue;
     fprintf (file, "%d\n", lit);
     count++;
   }
@@ -311,14 +311,17 @@ write_failed_assumptions (FILE * file)
     fprintf (output, "c found and wrote %d failed assumptions\n", count);
 #ifndef NDEBUG
   for (i = 1; i <= max_idx; i++)
-    if (picosat_failed_assumption (i))
+    if (picosat_failed_assumption (picosat, i))
       count--;
 #endif
   assert (!count);
 }
 
 static void
-write_to_file (const char *name, const char *type, void (*writer) (FILE *))
+write_to_file (PicoSAT * picosat, 
+               const char *name, 
+               const char *type,
+	       void (*writer) (PicoSAT *, FILE *))
 {
   int pclose_file, zipped = has_suffix (name, ".gz");
   FILE *file;
@@ -345,7 +348,7 @@ write_to_file (const char *name, const char *type, void (*writer) (FILE *))
 		 "c\nc writing %s%s to '%s'\n",
 		 zipped ? "gzipped " : "", type, name);
 
-      writer (file);
+      writer (picosat, file);
 
       if (pclose_file)
 	pclose (file);
@@ -390,7 +393,7 @@ write_to_file (const char *name, const char *type, void (*writer) (FILE *))
 "and <input> is an optional input file in DIMACS format.\n"
 
 int
-picosat_main (int argc, char **argv)
+picosat_main (PicoSAT ** psptr, int argc, char **argv)
 {
   int res, done, err, print_satisfying_assignment, force, print_formula;
   int assumption, assumptions;
@@ -405,6 +408,8 @@ picosat_main (int argc, char **argv)
   unsigned seed;
   FILE *file;
   int trace;
+
+  PicoSAT * picosat;
 
   start_time = picosat_time_stamp ();
 
@@ -436,6 +441,10 @@ picosat_main (int argc, char **argv)
   trace = 0;
   seed = 0;
   sols= 0;
+
+  picosat = 0;
+  if (psptr)
+    *psptr = 0;
 
   print_satisfying_assignment = 1;
   print_formula = 0;
@@ -815,13 +824,16 @@ picosat_main (int argc, char **argv)
 	  fprintf (output, "c %s\n", picosat_config ());
 	}
 
-      picosat_init ();
-      picosat_enter ();
+      picosat = picosat_init ();
+      if (psptr)
+	*psptr = picosat;
+
+      picosat_enter (picosat);
 
       if (output_name)
-	picosat_set_output (output);
+	picosat_set_output (picosat, output);
 
-      picosat_set_verbosity (verbose);
+      picosat_set_verbosity (picosat, verbose);
 
       if (verbose) fputs ("c\n", output);
 
@@ -829,14 +841,14 @@ picosat_main (int argc, char **argv)
 	{
 	  if (verbose)
 	    fprintf (output, "c tracing proof\n");
-	  picosat_enable_trace_generation ();
+	  picosat_enable_trace_generation (picosat);
 	}
 
       if (GLOBAL_DEFAULT_PHASE)
 	{
 	  if (verbose)
 	    fprintf (output, "c using %d as default phase\n", GLOBAL_DEFAULT_PHASE);
-	  picosat_set_global_default_phase (GLOBAL_DEFAULT_PHASE);
+	  picosat_set_global_default_phase (picosat, GLOBAL_DEFAULT_PHASE);
 	}
 
       if (propagation_limit >= 0)
@@ -844,7 +856,7 @@ picosat_main (int argc, char **argv)
 	  if (verbose)
 	    fprintf (output, "c propagation limit of %lld propagations\n",
 	             propagation_limit);
-	  picosat_set_propagation_limit (
+	  picosat_set_propagation_limit (picosat, 
 	    (unsigned long long) propagation_limit);
 	}
 
@@ -854,7 +866,7 @@ picosat_main (int argc, char **argv)
 	    fprintf (output, 
 	      "c saving original clauses for partial assignment\n");
 
-	  picosat_save_original_clauses ();
+	  picosat_save_original_clauses (picosat);
 	}
 
       if (verbose)
@@ -863,7 +875,7 @@ picosat_main (int argc, char **argv)
       if (verbose)
 	fflush (output);
 
-      if ((err_msg = parse (force)))
+      if ((err_msg = parse (picosat, force)))
 	{
 	  fprintf (output, "%s:%d: %s\n", input_name, lineno, err_msg);
 	  err = 1;
@@ -880,7 +892,7 @@ NEXT_SOLUTION:
 		  assumption = atoi (argv[i]);
 		  assert (assumption);
 
-		  picosat_assume (assumption);
+		  picosat_assume (picosat, assumption);
 
 		  if (verbose)
 		    fprintf (output, "c assumption %d\n", assumption);
@@ -889,7 +901,7 @@ NEXT_SOLUTION:
 
 	  if (print_formula)
 	    {
-	      picosat_print (output);
+	      picosat_print (picosat, output);
 	    }
 	  else
 	    {
@@ -897,16 +909,16 @@ NEXT_SOLUTION:
 		fprintf (output,
 			 "c initialized %u variables\n"
 			 "c found %u non trivial clauses\n",
-			 picosat_variables (),
-			 picosat_added_original_clauses ());
+			 picosat_variables (picosat),
+			 picosat_added_original_clauses (picosat));
 
-	      picosat_set_seed (seed);
+	      picosat_set_seed (picosat, seed);
 	      if (verbose)
 		fprintf (output,
 			 "c\nc random number generator seed %u\n", 
 			 seed);
 
-	      res = picosat_sat (decision_limit);
+	      res = picosat_sat (picosat, decision_limit);
 
 	      if (res == PICOSAT_UNSATISFIABLE)
 		{
@@ -919,31 +931,38 @@ NEXT_SOLUTION:
 		  fflush (output);
 
 		  if (COMPACT_TRACE_NAME)
-		    write_to_file (COMPACT_TRACE_NAME,
+		    write_to_file (picosat,
+		                   COMPACT_TRACE_NAME,
 				   "compact trace", 
 				   picosat_write_compact_trace);
 
 		  if (EXTENDED_TRACE_NAME)
-		    write_to_file (EXTENDED_TRACE_NAME,
+		    write_to_file (picosat,
+		                   EXTENDED_TRACE_NAME,
 				   "extended trace", 
 				   picosat_write_extended_trace);
 
 		  if (!incremental_rup_file && RUP_TRACE_NAME)
-		    write_to_file (RUP_TRACE_NAME,
+		    write_to_file (picosat,
+		                   RUP_TRACE_NAME,
 				   "rup trace", 
 				   picosat_write_rup_trace);
 
 		  if (clausal_core_name)
-		    write_to_file (clausal_core_name, 
+		    write_to_file (picosat,
+		                   clausal_core_name, 
 				   "clausal core",
 				   picosat_write_clausal_core);
 
 		  if (variable_core_name)
-		    write_to_file (variable_core_name, 
-				   "variable core", write_core_variables);
+		    write_to_file (picosat,
+		                   variable_core_name, 
+				   "variable core",
+				   write_core_variables);
 
 		  if (failed_assumptions_name)
-		    write_to_file (failed_assumptions_name,
+		    write_to_file (picosat,
+		                   failed_assumptions_name,
 		                   "failed assumptions", 
 				   write_failed_assumptions);
 		}
@@ -963,11 +982,11 @@ NEXT_SOLUTION:
 		    fflush (output);
 
 		  if (print_satisfying_assignment)
-		    printa (PARTIAL);
+		    printa (picosat, PARTIAL);
 
 		  if (ALLSAT)
 		    {
-		      blocksol ();
+		      blocksol (picosat);
 		      goto NEXT_SOLUTION;
 		    }
 		}
@@ -987,7 +1006,7 @@ NEXT_SOLUTION:
       if (!err && verbose)
 	{
 	  fputs ("c\n", output);
-	  picosat_stats ();
+	  picosat_stats (picosat);
 	  fprintf (output,
 	           "c %.1f seconds total run time\n",
 		   picosat_time_stamp () - start_time);
@@ -999,8 +1018,10 @@ NEXT_SOLUTION:
 	  sol = 0;
 	}
 
-      picosat_leave ();
-      picosat_reset ();
+      picosat_leave (picosat);
+      if (psptr)
+	*psptr = 0;
+      picosat_reset (picosat);
     }
 
   if (incremental_rup_file)

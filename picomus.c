@@ -45,6 +45,8 @@ static int * lits, nlits, szlits;
 static double start;
 static int reductions;
 
+static PicoSAT * ps;
+
 static int next (void) {
   int res = fgetc (input_file);
   if (res == '\n') lineno++;
@@ -230,12 +232,12 @@ int main (int argc, char ** argv) {
   }
   if (fclose_input) fclose (input_file);
   if (pclose_input) pclose (input_file);
-  picosat_init ();
-  picosat_set_prefix ("c [picosat] ");
-  picosat_set_output (stdout);
-  if (verbose > 1) picosat_set_verbosity (verbose - 1);
+  ps = picosat_init ();
+  picosat_set_prefix (ps, "c [picosat] ");
+  picosat_set_output (ps, stdout);
+  if (verbose > 1) picosat_set_verbosity (ps, verbose - 1);
   printed = 0;
-  if (!picosat_enable_trace_generation ())
+  if (!picosat_enable_trace_generation (ps))
     warn ("PicoSAT compiled without trace generation"),
     warn ("core extraction disabled");
   else {
@@ -244,23 +246,23 @@ int main (int argc, char ** argv) {
     for (round = 1; round <= MAXCOREROUNDS; round++) {
       if (verbose > 1)
 	msg (1, "starting core extraction round %d", round);
-      picosat_set_seed (round);
+      picosat_set_seed (ps, round);
       for (i = 0; i < nclauses; i++) {
 	c = clauses + i;
 	if (c->red) {
-	  picosat_add (1);
-	  picosat_add (-1);
+	  picosat_add (ps, 1);
+	  picosat_add (ps, -1);
 	} else {
 	  for (p = c->lits; *p; p++)
-	    picosat_add (*p);
+	    picosat_add (ps, *p);
 	}
 #ifndef NDEBUG
 	tmp = 
 #endif
-	picosat_add (0);
+	picosat_add (ps, 0);
 	assert (tmp == i);
       }
-      res = picosat_sat (-1);
+      res = picosat_sat (ps, -1);
       if (res == 10) { assert (round == 1); goto SAT; }
       assert (res == 20);
       if (!printed) {
@@ -271,8 +273,8 @@ int main (int argc, char ** argv) {
       }
       for (i = 0; i < nclauses; i++) {
 	c = clauses + i;
-	if (c->red) { assert (!picosat_coreclause (i)); continue; }
-	if (picosat_coreclause (i)) continue;
+	if (c->red) { assert (!picosat_coreclause (ps, i)); continue; }
+	if (picosat_coreclause (ps, i)) continue;
 	c->red = 1;
       }
       oldn = n;
@@ -282,10 +284,10 @@ int main (int argc, char ** argv) {
 	   round, n, percent (n, nclauses), nclauses,
 	   picosat_time_stamp () - start);
       assert (oldn >= n);
-      picosat_reset ();
-      picosat_init ();
-      picosat_set_prefix ("c [picosat] ");
-      picosat_set_output (stdout);
+      picosat_reset (ps);
+      ps = picosat_init ();
+      picosat_set_prefix (ps, "c [picosat] ");
+      picosat_set_output (ps, stdout);
       if (round >= MINCOREROUNDS) {
 	red = oldn - n;
 	if (red < 10 && (100*red + 99)/oldn < 2) {
@@ -293,41 +295,41 @@ int main (int argc, char ** argv) {
 	  if (nonred > MAXNONREDROUNDS) break;
 	}
       }
-      if (round < MAXCOREROUNDS) picosat_enable_trace_generation ();
+      if (round < MAXCOREROUNDS) picosat_enable_trace_generation (ps);
     }
   }
   for (i = 0; i < nclauses; i++) {
     c = clauses + i;
     if (c->red) {
-      picosat_add (1);
-      picosat_add (-1);
+      picosat_add (ps, 1);
+      picosat_add (ps, -1);
 #ifndef NDEBUG
       tmp = 
 #endif
-      picosat_add (0);
+      picosat_add (ps, 0);
       assert (tmp == i);
       continue;
     }
     c->lit = nvars + i + 1;
-    picosat_add (-c->lit);
+    picosat_add (ps, -c->lit);
     for (p = c->lits; *p; p++)
-      (void) picosat_add (*p);
+      (void) picosat_add (ps, *p);
 #ifndef NDEBUG
     tmp = 
 #endif
-    picosat_add (0);
+    picosat_add (ps, 0);
     assert (tmp == i);
   }
   for (i = 0; i < nclauses; i++) {
     c = clauses + i;
     if (c->red) continue;
-    picosat_assume (c->lit);
+    picosat_assume (ps, c->lit);
   }
-  res = picosat_sat (-1);
+  res = picosat_sat (ps, -1);
   if (res == 20) {
     if (!printed) printf ("s UNSATISFIABLE\n"), fflush (stdout);
     for (i = 0; i < nclauses; i++) clauses[i].red = 1;
-    q = picosat_mus_assumptions (0, callback, 1);
+    q = picosat_mus_assumptions (ps, 0, callback, 1);
     while ((i = *q++)) {
       i -= nvars + 1;
       assert (0 <= i && i < nclauses);
@@ -339,12 +341,12 @@ SAT:
     printf ("s SATISFIABLE\n"); fflush (stdout);
     if (!nowitness) {
       for (i = 1; i <= nvars; i++)
-	printf ("v %d\n", ((picosat_deref (i) < 0) ? -1 : 1) * i);
+	printf ("v %d\n", ((picosat_deref (ps, i) < 0) ? -1 : 1) * i);
       printf ("v 0\n");
     }
   }
-  if (verbose) picosat_stats ();
-  picosat_reset ();
+  if (verbose) picosat_stats (ps);
+  picosat_reset (ps);
   n = 0;
   for (i = 0; i < nclauses; i++) if (!clauses[i].red) n++;
   red = nclauses - n;

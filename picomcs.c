@@ -28,6 +28,8 @@ static int lineno = 1, close_input;
 static const char * input_name;
 static FILE * input;
 
+static PicoSAT * ps;
+
 static void release_clauses (void) {
   Clause * p, * next;
   for (p = first_clause; p; p = next) {
@@ -188,9 +190,9 @@ static void encode_clause (Clause * c) {
     for (p = c->lits; (lit = *p); p++) printf (" %d", lit);
     fputc ('\n', stdout), fflush (stdout);
   }
-  picosat_add (-clause2selvar (c));
-  for (p = c->lits; (lit = *p); p++) picosat_add (lit);
-  picosat_add (0);
+  picosat_add (ps, -clause2selvar (c));
+  for (p = c->lits; (lit = *p); p++) picosat_add (ps, lit);
+  picosat_add (ps, 0);
 }
 
 static void encode (void) {
@@ -207,7 +209,7 @@ static void camcs (void) {
   int cid, i;
   const int * mcs, * p;
   msg (1, "starting to compute all minimal correcting sets");
-  while ((mcs = picosat_next_minimal_correcting_subset_of_assumptions ())) {
+  while ((mcs = picosat_next_minimal_correcting_subset_of_assumptions (ps))) {
     for (p = mcs; (cid = *p); p++)
       push_stack (cid);
     if (verbose >= 2) {
@@ -240,7 +242,7 @@ static void cumcs (void) {
   int stats[2], count, cid;
   const int * humus, * p;
   stats[0] = stats[1] = 0;
-  humus = picosat_humus (cumcscb, stats);
+  humus = picosat_humus (ps, cumcscb, stats);
   if (isatty (1) && verbose == 1) fputc ('\n', stdout);
   count = 0;
   for (p = humus; (cid = *p); p++) {
@@ -311,19 +313,19 @@ int main (int argc, char ** argv) {
     exit (1);
   }
   if (close_input) fclose (input);
-  picosat_init ();
-  picosat_set_prefix ("c [picosat] ");
+  ps = picosat_init ();
+  picosat_set_prefix (ps, "c [picosat] ");
   encode ();
   for (i = first_cid; i <= last_cid; i++) 
-    picosat_set_default_phase_lit (i, 1);
-  for (i = first_cid; i <= last_cid; i++) picosat_assume (i);
-  res = picosat_sat (-1);
+    picosat_set_default_phase_lit (ps, i, 1);
+  for (i = first_cid; i <= last_cid; i++) picosat_assume (ps, i);
+  res = picosat_sat (ps, -1);
   if (res == 10) printf ("s SATISFIABLE\n");
   else printf ("s UNSATISFIABLE\n");
   fflush (stdout);
   if (join) cumcs (); else camcs ();
-  if (verbose) picosat_stats ();
-  picosat_reset ();
+  if (verbose) picosat_stats (ps);
+  picosat_reset (ps);
   if (!noprint) {
     if (join) print_umcs (); else print_all_mcs ();
   }

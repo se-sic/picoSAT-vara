@@ -4,8 +4,9 @@
 
 #include "picosat.h"
 
-int picosat_main (int, char **);
+int picosat_main (PicoSAT **, int, char **);
 
+static PicoSAT * ps;
 static int catched;
 
 static void (*sig_int_handler);
@@ -35,9 +36,9 @@ resetsighandlers (void)
 static void
 message (int sig)
 {
-  picosat_message (1, "");
-  picosat_message (1, "*** CAUGHT SIGNAL %d ***", sig);
-  picosat_message (1, "");
+  picosat_message (ps, 1, "");
+  picosat_message (ps, 1, "*** CAUGHT SIGNAL %d ***", sig);
+  picosat_message (ps, 1, "");
 }
 
 static void
@@ -47,7 +48,7 @@ catch (int sig)
     {
       message (sig);
       catched = 1;
-      picosat_stats ();
+      picosat_stats (ps);
       message (sig);
     }
 
@@ -81,7 +82,7 @@ main (int argc, char **argv)
   if (verbose)
     setsighandlers ();
 
-  res = picosat_main (argc, argv);
+  res = picosat_main (&ps, argc, argv);
 
   if (verbose)
     resetsighandlers ();
