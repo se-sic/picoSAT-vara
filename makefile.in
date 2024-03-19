@@ -1,5 +1,5 @@
 CC=@CC@
-CFLAGS=@CFLAGS@ -fno-strict-aliasing
+CFLAGS=@CFLAGS@
 
 all: @TARGETS@
 

@@ -45,6 +45,7 @@ IN THE SOFTWARE.
 #define PICOSAT_UNKNOWN         0
 #define PICOSAT_SATISFIABLE     10
 #define PICOSAT_UNSATISFIABLE   20
+
 /*------------------------------------------------------------------------*/
 /* Global variables for configurability
  */
