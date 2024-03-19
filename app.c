@@ -16,6 +16,8 @@ static FILE *input;
 static int inputid;
 static FILE *output;
 static int verbose;
+static int sargc;
+static char ** sargv;
 static char buffer[100];
 static char *bhead = buffer;
 static const char *eob = buffer + 80;
@@ -244,10 +246,66 @@ has_suffix (const char *str, const char *suffix)
 static void
 write_core_variables (FILE * file)
 {
-  int i, max_idx = picosat_variables ();
+  int i, max_idx = picosat_variables (), count = 0;
   for (i = 1; i <= max_idx; i++)
     if (picosat_corelit (i))
-      fprintf (file, "%d\n", i);
+      {
+	fprintf (file, "%d\n", i);
+	count++;
+      }
+
+  if (verbose)
+    fprintf (output, "c found and wrote %d core variables\n", count);
+}
+
+static int
+next_assumption (int start)
+{
+  char * arg, c;
+  int res;
+  res = start + 1;
+  while (res < sargc)
+  {
+    arg = sargv[res++];
+    if (!strcmp (arg, "-a"))
+      {
+	assert (res < sargc);
+	break;
+      }
+
+    if (arg[0] == '-') {
+      c = arg[1];
+      if (c == 'l' || c == 'i' || c == 's' || c == 'o' || c == 't' ||
+	  c == 'T' || c == 'r' || c == 'R' || c == 'c' || c == 'V' ||
+	  c == 'U' || c == 'A') res++;
+    }
+  }
+  if (res >= sargc) res = 0;
+  return res;
+}
+
+static void
+write_failed_assumptions (FILE * file)
+{
+  int i, lit, count = 0;
+#ifndef NDEBUG
+  int max_idx = picosat_variables ();
+#endif
+  i = 0;
+  while ((i = next_assumption (i))) {
+    lit = atoi (sargv[i]);
+    if (!picosat_failed_assumption (lit)) continue;
+    fprintf (file, "%d\n", lit);
+    count++;
+  }
+  if (verbose)
+    fprintf (output, "c found and wrote %d failed assumptions\n", count);
+#ifndef NDEBUG
+  for (i = 1; i <= max_idx; i++)
+    if (picosat_failed_assumption (i))
+      count--;
+#endif
+  assert (!count);
 }
 
 static void
@@ -304,15 +362,18 @@ write_to_file (const char *name, const char *type, void (*writer) (FILE *))
 "  -p           print formula in DIMACS format and exit\n" \
 "  -a <lit>     start with an assumption\n" \
 "  -l <limit>   set decision limit (no limit per default)\n" \
-"  -i <0/1>     force FALSE respectively TRUE as default phase\n" \
+"  -P <limit>   set propagation limit (no limit per default)\n" \
+"  -i [0-3]     [0-3]=[FALSE,TRUE,JWH,RAND] initial phase (default 2=JWH)\n" \
 "  -s <seed>    set random number generator seed (default 0)\n" \
 "  -o <output>  set output file (<stdout> per default)\n" \
 "  -t <trace>   generate compact proof trace file\n" \
 "  -T <trace>   generate extended proof trace file\n" \
 "  -r <trace>   generate reverse unit propagation proof file\n" \
+"  -R <trace>   generate reverse unit propagation proof file incrementally\n" \
 "  -c <core>    generate clausal core file in DIMACS format\n" \
 "  -V <core>    generate file listing core variables\n" \
 "  -U <core>    generate file listing used variables\n" \
+"  -A <core>    generate file listing failed assumptions\n" \
 "\n" \
 "and <input> is an optional input file in DIMACS format.\n"
 
@@ -323,7 +384,9 @@ picosat_main (int argc, char **argv)
   const char * clausal_core_name, * variable_core_name;
   int assumption, assumptions;
   const char *input_name, *output_name;
+  const char * failed_assumptions_name;
   int close_input, pclose_input;
+  long long propagation_limit;
   int i, decision_limit;
   double start_time;
   unsigned seed;
@@ -332,8 +395,12 @@ picosat_main (int argc, char **argv)
 
   start_time = picosat_time_stamp ();
 
+  sargc = argc;
+  sargv = argv;
+
   clausal_core_name = 0;
   variable_core_name = 0;
+  failed_assumptions_name = 0;
   output_name = 0;
   COMPACT_TRACE_NAME = 0;
   EXTENDED_TRACE_NAME = 0;
@@ -344,10 +411,11 @@ picosat_main (int argc, char **argv)
   input_name = "<stdin>";
   input = stdin;
   output = stdout;
-  verbose = 1;
+  verbose = 0;
   done = err = 0;
   decision_limit = -1;
-  GLOBAL_DEFAULT_PHASE = 0;
+  propagation_limit = -1;
+  GLOBAL_DEFAULT_PHASE = 2;
   assumptions = 0;
   force = 0;
   trace = 0;
@@ -401,6 +469,16 @@ picosat_main (int argc, char **argv)
 	  else
 	    decision_limit = atoi (argv[i]);
 	}
+      else if (!strcmp (argv[i], "-P"))
+	{
+	  if (++i == argc)
+	    {
+	      fprintf (output, "*** picosat: argument to '-P' missing\n");
+	      err = 1;
+	    }
+	  else
+	    propagation_limit = atoll (argv[i]);
+	}
       else if (!strcmp (argv[i], "-i"))
 	{
 	  if (++i == argc)
@@ -408,13 +486,9 @@ picosat_main (int argc, char **argv)
 	      fprintf (output, "*** picosat: argument to '-i' missing\n");
 	      err = 1;
 	    }
-	  else if (!strcmp (argv[i], "0"))
+	  else if (!argv[i][1] && ('0' <= argv[i][0] && argv[i][0] <= '3'))
 	    {
-	      GLOBAL_DEFAULT_PHASE = -1;
-	    }
-	  else if (!strcmp (argv[i], "1"))
-	    {
-	      GLOBAL_DEFAULT_PHASE = 1;
+	      GLOBAL_DEFAULT_PHASE = argv[i][0] - '0';
 	    }
 	  else
 	    {
@@ -611,6 +685,24 @@ picosat_main (int argc, char **argv)
 	      trace = 1;
 	    }
 	}
+      else if (!strcmp (argv[i], "-A"))
+	{
+	  if (failed_assumptions_name)
+	    {
+	      fprintf (output,
+		       "*** picosat: "
+		       "multiple failed assumptions files '%s' and '%s'\n",
+		       failed_assumptions_name, argv[i]);
+	      err = 1;
+	    }
+	  else if (++i == argc)
+	    {
+	      fprintf (output, "*** picosat: argument ot '-A' missing\n");
+	      err = 1;
+	    }
+	  else
+	    failed_assumptions_name = argv[i];
+	}
       else if (argv[i][0] == '-')
 	{
 	  fprintf (output,
@@ -683,8 +775,7 @@ picosat_main (int argc, char **argv)
 
       picosat_set_verbosity (verbose);
 
-      if (verbose && (trace || GLOBAL_DEFAULT_PHASE))
-	fputs ("c\n", output);
+      if (verbose) fputs ("c\n", output);
 
       if (trace)
 	{
@@ -696,11 +787,18 @@ picosat_main (int argc, char **argv)
       if (GLOBAL_DEFAULT_PHASE)
 	{
 	  if (verbose)
-	    fprintf (output,
-		     "c using %s as default phase\n",
-		     GLOBAL_DEFAULT_PHASE < 0 ? "FALSE" : "TRUE");
+	    fprintf (output, "c using %d as default phase\n", GLOBAL_DEFAULT_PHASE);
 
 	  picosat_set_global_default_phase (GLOBAL_DEFAULT_PHASE);
+	}
+
+      if (propagation_limit >= 0)
+	{
+	  if (verbose)
+	    fprintf (output, "c propagation limit of %lld propagations\n",
+	             propagation_limit);
+	  picosat_set_propagation_limit (
+	    (unsigned long long) propagation_limit);
 	}
 
       if (verbose)
@@ -715,26 +813,17 @@ picosat_main (int argc, char **argv)
 	{
 	  if (assumptions)
 	    {
-	      for (i = 1; i < argc; i++)
+	      i = 0;
+	      while ((i = next_assumption (i)))
 		{
-		  if (!strcmp (argv[i], "-l") ||
-		      !strcmp (argv[i], "-s") ||
-		      !strcmp (argv[i], "-o") ||
-		      !strcmp (argv[i], "-t") || !strcmp (argv[i], "-c"))
-		    {
-		      i++;
-		    }
-		  else if (!strcmp (argv[i], "-a"))
-		    {
-		      assert (i + 1 < argc);
-		      assumption = atoi (argv[++i]);
-		      assert (assumption);
+		  assert (i < argc);
+		  assumption = atoi (argv[i]);
+		  assert (assumption);
 
-		      picosat_assume (assumption);
+		  picosat_assume (assumption);
 
-		      if (verbose)
-			fprintf (output, "c assumption %d\n", assumption);
-		    }
+		  if (verbose)
+		    fprintf (output, "c assumption %d\n", assumption);
 		}
 	    }
 
@@ -786,6 +875,11 @@ picosat_main (int argc, char **argv)
 		  if (variable_core_name)
 		    write_to_file (variable_core_name, 
 				   "variable core", write_core_variables);
+
+		  if (failed_assumptions_name)
+		    write_to_file (failed_assumptions_name,
+		                   "failed assumptions", 
+				   write_failed_assumptions);
 		}
 	      else if (res == PICOSAT_SATISFIABLE)
 		{
