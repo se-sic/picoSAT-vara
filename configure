@@ -1,6 +1,6 @@
 #!/bin/sh
 
-satcompetition=yes
+satcompetition=undefined
 
 log=no
 debug=no
@@ -18,7 +18,11 @@ do
     --trace) trace=yes;;
     --no-trace) trace=no;;
     -O) debug=no; optimize=yes;;
-    *) echo "*** usage: ./configure [-g][-O][--log][--stats]" 1>&2; exit 1;;
+    *) cat <<EOF
+*** usage: ./configure [-g][-O][--log][--[no-]stats][--[no-]trace]
+EOF
+exit 1
+;;
   esac
 shift
 done
@@ -77,7 +81,7 @@ then
       fi
       if [ $debug = yes ]
       then
-        CFLAGS="$CFLAGS -g3"
+        CFLAGS="$CFLAGS -g3 -ggdb"
       else
 	CFLAGS="$CFLAGS -DNDEBUG"
 	if [ $optimize = yes ]
