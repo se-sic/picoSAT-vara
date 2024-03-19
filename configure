@@ -4,7 +4,6 @@ satcompetition=no
 
 log=no
 debug=no
-optimize=no
 stats=undefined
 trace=undefined
 static=yes
@@ -15,30 +14,31 @@ static=no
 while [ $# -gt 0 ]
 do
   case $1 in
-    -l|--log) debug=yes; log=yes;;
-    -g|--debug) debug=yes; optimize=no;;
+    -g|--debug) debug=yes;;
+    -O|--optimize) debug=no;;
+    -l|--log) log=yes;;
     -s|--stats) stats=yes;;
     -t|--trace) trace=yes;;
     --no-stats) stats=no;;
     --no-trace) trace=no;;
     -32|--32|-m32) thirtytwobit=yes;;
     -static|--static) static=yes;;
-    -O) debug=no; optimize=yes;;
+    -shared|--shared) shared=yes;;
     *) cat <<EOF
 usage: ./configure [<option> ...]
 
 where <option> is one of the following:
 
-  -g|--debug           includ debugging code and symbols
-  -l|--log             add low level logging code
-  -s|--stats           include and enable more expensive stats counters
-  -t|--trace           compile with trace generation support (more memory)
+  -g|--debug           include debugging code and symbols
+  -O|--optimize        optimized compilation (default)
+  -l|--log             add low level logging code (default with '-g')
+  -s|--stats           more expensive statististcs (default with '-g')
+  -t|--trace           trace generation (more memory, default with '-g')
   --no-stats           disable expensive stats
-  --no-trace           enable trace generation (less memory)
+  --no-trace           enable trace generation
   -32|--32|-m32        compile for 32 bit machine even on 64 bit host
-  -static|--static     only produce static library
-  -shared|--shared     produce shared library as well
-  -O                   optimize a lot and disable trace generation
+  -static|--static     produce static binary
+  -shared|--shared     produce shared library
 EOF
 exit 1
 ;;
@@ -51,7 +51,6 @@ echo "version ... `cat VERSION`"
 if [ $satcompetition = yes ]
 then
   debug=no
-  optimize=yes
   stats=no
   trace=no
   thirtytwobit=yes
@@ -60,29 +59,12 @@ then
 fi
 
 echo "debug ... $debug"
-echo "optimize ... $optimize"
 echo "log ... $log"
 
-if [ $stats = undefined ]
-then
-  if [ $optimize = yes ]
-  then
-    stats=no
-  else
-    stats=yes
-  fi
-fi
+[ $stats = undefined ] && stats=$debug
 echo "stats ... $stats"
 
-if [ $trace = undefined ]
-then
-  if [ $optimize = yes ]
-  then
-    trace=no
-  else
-    trace=yes
-  fi
-fi
+[ $trace = undefined ] && trace=$debug
 echo "trace ... $trace"
 
 echo "static ... $static"
@@ -109,13 +91,7 @@ then
       then
         CFLAGS="$CFLAGS -g3 -ggdb"
       else
-	CFLAGS="$CFLAGS -DNDEBUG"
-	if [ $optimize = yes ]
-	then
-	  CFLAGS="$CFLAGS -O3 -fomit-frame-pointer -finline-limit=1000000"
-	else
-	  CFLAGS="$CFLAGS -O2"
-	fi
+	CFLAGS="$CFLAGS -DNDEBUG -O3"
       fi
       ;;
     *)
@@ -129,7 +105,7 @@ then
   esac
 fi
 
-TARGETS="picosat picomus libpicosat.a"
+TARGETS="picosat picomcs picomus picogcnf libpicosat.a"
 if [ $shared = yes ]
 then
   TARGETS="$TARGETS libpicosat.so"
@@ -141,7 +117,7 @@ echo "cc ... $CC"
 
 echo "cflags ... $CFLAGS"
 
-echo -n "makefile ..."
+printf "makefile ..."
 rm -f makefile
 sed \
   -e "s;@CC@;$CC;" \

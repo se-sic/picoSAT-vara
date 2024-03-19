@@ -1,3 +1,39 @@
+news for release 951 since 941
+------------------------------
+
+* cleaned up code (based on comments by Donald Knuth)
+
+* lreduce=O(conflicts^.5)
+
+* added 'picosat_visits' and 'picosat_decisions'
+
+* added '--partial' command line option
+
+* added 'picosat_deref_partial' and 'picosat_save_original_clauses'
+
+* added 'picomcs' as example for MSS computation
+
+news for release 941 since 936
+------------------------------
+
+* added 'picogcnf'
+
+* added All-SAT mode ('--all' command line option)
+
+* statistics include time spent in failed literal preprocessing (probing)
+
+* 'picosat_failed_context' for 'push & pop'
+   (and tested failed assumptions for 'push & pop')
+
+* 'picosat_simplify' for forced garbage collection
+
+* undefined NFL, defined NADC (= failed literals on, ADC's off)
+
+* 'picosat_push' and 'picosat_pop' (beta version)
+
+* fixed some issues related to binary clause handling and 
+  generating list of failed assumptions
+
 news for release 936 since 935
 ------------------------------
 

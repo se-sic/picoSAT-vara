@@ -1,5 +1,5 @@
 /****************************************************************************
-Copyright (c) 2010, Armin Biere, Johannes Kepler University.
+Copyright (c) 2011-2012, Armin Biere, Johannes Kepler University.
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to
@@ -34,7 +34,7 @@ IN THE SOFTWARE.
 
 typedef struct Cls { int lit, red, * lits; } Cls;
 
-static int verbose;
+static int verbose = 1, nowitness;
 static int fclose_input, pclose_input, close_output;
 static FILE * input_file, * output_file;
 static const char * input_name, * output_name;
@@ -51,15 +51,25 @@ static int next (void) {
   return res;
 }
 
-static void msg (const char * fmt, ...) {
+static void msg (int level, const char * fmt, ...) {
   va_list ap;
-  if (!verbose) return;
-  fputs ("c [picomus] ", stderr);
+  if (verbose < level) return;
+  fputs ("c [picomus] ", stdout);
   va_start (ap, fmt);
-  vfprintf (stderr, fmt, ap);
+  vfprintf (stdout, fmt, ap);
   va_end (ap);
-  fputc ('\n', stderr);
-  fflush (stderr);
+  fputc ('\n', stdout);
+  fflush (stdout);
+}
+
+static void warn (const char * fmt, ...) {
+  va_list ap;
+  fputs ("c [picomus] WARNING: ", stdout);
+  va_start (ap, fmt);
+  vfprintf (stdout, fmt, ap);
+  va_end (ap);
+  fputc ('\n', stdout);
+  fflush (stdout);
 }
 
 static const char * parse (void) {
@@ -76,7 +86,7 @@ HEADER:
   if (ch != 'p') return "expected 'c' or 'p'";
   if (fscanf (input_file, " cnf %d %d", &nvars, &nclauses) != 2)
     return "invalid header";
-  msg ("p cnf %d %d", nvars, nclauses);
+  msg (1, "p cnf %d %d", nvars, nclauses);
   clauses = calloc (nclauses, sizeof *clauses);
   lit = n = 0;
 LIT:
@@ -123,12 +133,12 @@ LIT:
 
 static void die (const char * fmt, ...) {
   va_list ap;
-  fputs ("*** picomus: ", stderr);
+  fputs ("*** picomus: ", stdout);
   va_start (ap, fmt);
-  vfprintf (stderr, fmt, ap);
+  vfprintf (stdout, fmt, ap);
   va_end (ap);
-  fputc ('\n', stderr);
-  fflush (stderr);
+  fputc ('\n', stdout);
+  fflush (stdout);
   exit (1);
 }
 
@@ -143,35 +153,40 @@ static void callback (void * dummy, const int * mus) {
   for (p = mus; *p; p++) remaining++;
   assert (remaining <= nclauses);
   reductions++;
-  msg ("reduction %d to %d out of %d (%.0f%%) after %.1f sec",
+  msg (1, "reduction %d to %d = %.0f%% out of %d after %.1f sec",
        reductions,
-       remaining, nclauses, percent (remaining, nclauses),
+       remaining, percent (remaining, nclauses), nclauses,
        picosat_time_stamp () - start);
 }
 
 int main (int argc, char ** argv) {
-  int i, * p, n, oldn, red, nonred, tmp, res, round, printed, len;
+  int i, * p, n, oldn, red, nonred, res, round, printed, len;
   const char * err;
   const int * q;
   char * cmd;
   Cls * c;
+#ifndef NDEBUG
+  int tmp;
+#endif
   start = picosat_time_stamp ();
   for (i = 1; i < argc; i++) {
     if (!strcmp (argv[i], "-h")) {
       printf (
-        "picomus [-v][-h][<input>[<output>]]\n"
+        "picomus [-v][-h][-a][<input>[<output>]]\n"
         "\n"
 	"This tool is a SAT solver that uses the PicoSAT library to\n"
 	"generate a 'minimal unsatisfiable core' also known as 'minimal\n"
 	"unsatisfiable set' (MUS) of a CNF in DIMACS format.\n"
         "\n"
-        "Both file argumetns can be \"-\" and then denote <stdin> resp.\n"
+        "Both file arguments can be \"-\" and then denote <stdin> resp.\n"
         "<stdout>.  If no input file is given <stdin> is used.  If no\n"
-	"output file is specified the MUS is only computed, but not\n"
-	"printed.\n"
+	"output file is specified the MUS is computed and only printed\n"
+	"to <stdout> in the format of the SAT competition 2011 MUS track.\n"
 	"\n"
-	"Otherwise the output conforms to the standard SAT solver\n"
-	"format used at SAT competitions.\n"
+	"If '-n' is specified solution respectively MUS printing\n"
+	"on <stdout> (using the 'v ...' format) is suppressed.\n"
+	"If <output> is specified an MUS is written to this file,\n"
+	"even if '-n' is used.\n"
 	"\n"
 #ifndef TRACE
 	"WARNING: PicosSAT is compiled without trace support.\n"
@@ -183,15 +198,20 @@ int main (int argc, char ** argv) {
 	"'./configure -O --trace' when building PicoSAT.\n"
 #else
 	"Since trace generation code is included, this binary\n"
-	"uses both core extraction and clause selector variables.\n"
+	"uses also core extraction in addition to clause selector\n"
+	"variables.\n"
 #endif
 	);
       exit (0);
     } else if (!strcmp (argv[i], "-v")) verbose++;
+    else if (!strcmp (argv[i], "-n")) nowitness = 1;
+    else if (argv[i][0] == '-') 
+      die ("invalid command line option '%s'", argv[i]);
     else if (output_name) die ("too many arguments");
     else if (!input_name) input_name = argv[i];
     else output_name = argv[i];
   }
+  if (!output_name) warn ("no output file given");
   if (input_name && strcmp (input_name, "-")) {
     len = strlen (input_name);
     if (len >= 3 && !strcmp (input_name + len - 3, ".gz")) {
@@ -204,23 +224,26 @@ int main (int argc, char ** argv) {
     if (!input_file) die ("can not read '%s'", input_name);
   } else input_file = stdin, input_name = "-";
   if ((err =  parse ())) {
-    fprintf (stderr, "%s:%d: %s\n", input_name, lineno, err);
-    fflush (stderr);
+    fprintf (stdout, "%s:%d: %s\n", input_name, lineno, err);
+    fflush (stdout);
     exit (1);
   }
   if (fclose_input) fclose (input_file);
   if (pclose_input) pclose (input_file);
   picosat_init ();
   picosat_set_prefix ("c [picosat] ");
-  picosat_set_output (stderr);
+  picosat_set_output (stdout);
   if (verbose > 1) picosat_set_verbosity (verbose - 1);
   printed = 0;
-  if (picosat_enable_trace_generation ()) {
+  if (!picosat_enable_trace_generation ())
+    warn ("PicoSAT compiled without trace generation"),
+    warn ("core extraction disabled");
+  else {
     n = nclauses;
     nonred = 0;
     for (round = 1; round <= MAXCOREROUNDS; round++) {
       if (verbose > 1)
-	msg ("starting core extraction round %d", round);
+	msg (1, "starting core extraction round %d", round);
       picosat_set_seed (round);
       for (i = 0; i < nclauses; i++) {
 	c = clauses + i;
@@ -231,7 +254,10 @@ int main (int argc, char ** argv) {
 	  for (p = c->lits; *p; p++)
 	    picosat_add (*p);
 	}
-	tmp = picosat_add (0);
+#ifndef NDEBUG
+	tmp = 
+#endif
+	picosat_add (0);
 	assert (tmp == i);
       }
       res = picosat_sat (-1);
@@ -252,14 +278,14 @@ int main (int argc, char ** argv) {
       oldn = n;
       n = 0;
       for (i = 0; i < nclauses; i++) if (!clauses[i].red) n++;
-      msg ("extracted core %d of size %d out of %d (%.0f%%) after %.1f sec",
-	   round, n, nclauses, percent (n, nclauses),
+      msg (1, "extracted core %d of size %d = %0.f%% out of %d after %.1f sec",
+	   round, n, percent (n, nclauses), nclauses,
 	   picosat_time_stamp () - start);
       assert (oldn >= n);
       picosat_reset ();
       picosat_init ();
       picosat_set_prefix ("c [picosat] ");
-      picosat_set_output (stderr);
+      picosat_set_output (stdout);
       if (round >= MINCOREROUNDS) {
 	red = oldn - n;
 	if (red < 10 && (100*red + 99)/oldn < 2) {
@@ -275,7 +301,10 @@ int main (int argc, char ** argv) {
     if (c->red) {
       picosat_add (1);
       picosat_add (-1);
-      tmp = picosat_add (0);
+#ifndef NDEBUG
+      tmp = 
+#endif
+      picosat_add (0);
       assert (tmp == i);
       continue;
     }
@@ -283,7 +312,10 @@ int main (int argc, char ** argv) {
     picosat_add (-c->lit);
     for (p = c->lits; *p; p++)
       (void) picosat_add (*p);
-    tmp = picosat_add (0);
+#ifndef NDEBUG
+    tmp = 
+#endif
+    picosat_add (0);
     assert (tmp == i);
   }
   for (i = 0; i < nclauses; i++) {
@@ -305,16 +337,20 @@ int main (int argc, char ** argv) {
 SAT:
     assert (res == 10);
     printf ("s SATISFIABLE\n"); fflush (stdout);
-    for (i = 1; i <= nvars; i++)
-      printf ("v %d\n", ((picosat_deref (i) < 0) ? -1 : 1) * i);
-    printf ("v 0\n");
+    if (!nowitness) {
+      for (i = 1; i <= nvars; i++)
+	printf ("v %d\n", ((picosat_deref (i) < 0) ? -1 : 1) * i);
+      printf ("v 0\n");
+    }
   }
   if (verbose) picosat_stats ();
   picosat_reset ();
   n = 0;
   for (i = 0; i < nclauses; i++) if (!clauses[i].red) n++;
   red = nclauses - n;
-  msg ("found %d redundant clauses %.0f%%", red, percent (red, nclauses));
+  msg (1, "found %d redundant clauses %.0f%%", red, percent (red, nclauses));
+  msg (0, "computed MUS of size %d out of %d (%.0f%%)",
+       n, nclauses, percent (n, nclauses));
   if (output_name && strcmp (output_name, "-")) {
     output_file = fopen (output_name, "w");
     if (!output_file) die ("can not write '%s'", output_name);
@@ -328,13 +364,20 @@ SAT:
 	fprintf (output_file, "0\n");
       }
     if (close_output) fclose (output_file);
+  } 
+  if (res == 20) {
+    if (!nowitness) {
+      for (i = 0; i < nclauses; i++)
+	if (!clauses[i].red) printf ("v %d\n", i+1);
+      printf ("v 0\n");
+    }
   }
-  msg ("%s %d irredundant clauses %.0f%%",
+  msg (1, "%s %d irredundant clauses %.0f%%",
        output_file ? "printed" : "computed", n, percent (n, nclauses));
   for (i = 0; i < nclauses; i++) free (clauses[i].lits);
   free (clauses);
   free (lits);
-  msg ("%d reductions in %.1f seconds", 
+  msg (1, "%d reductions in %.1f seconds", 
        reductions, picosat_time_stamp () - start);
   return res;
 }

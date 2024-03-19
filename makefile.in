@@ -4,17 +4,30 @@ CFLAGS=@CFLAGS@
 all: @TARGETS@
 
 clean:
-	rm -f picosat *.exe *.s *.o *.a *.so
+	rm -f picosat picomcs picomus picogcnf
+	rm -f *.exe *.s *.o *.a *.so *.plist
 	rm -f makefile config.h
 	rm -f gmon.out *~ 
+
+analyze:
+	clang --analyze $(CFLAGS) *.c *.h
 
 picosat: libpicosat.a app.o main.o
 	$(CC) $(CFLAGS) -o $@ main.o app.o -L. -lpicosat
 
+picomcs: libpicosat.a picomcs.o
+	$(CC) $(CFLAGS) -o $@ picomcs.o -L. -lpicosat
+
 picomus: libpicosat.a picomus.o
 	$(CC) $(CFLAGS) -o $@ picomus.o -L. -lpicosat
 
+picogcnf: libpicosat.a picogcnf.o
+	$(CC) $(CFLAGS) -o $@ picogcnf.o -L. -lpicosat
+
 app.o: app.c picosat.h makefile
+	$(CC) $(CFLAGS) -c $<
+
+picomcs.o: picomcs.c picosat.h makefile
 	$(CC) $(CFLAGS) -c $<
 
 picomus.o: picomus.c picosat.h makefile
