@@ -397,7 +397,7 @@ int
 picosat_main (PicoSAT ** psptr, int argc, char **argv)
 {
   int res, done, err, print_satisfying_assignment, force, print_formula;
-  int assumption, assumptions;
+  int assumption, assumptions, defaultphase;
   const char * clausal_core_name, * variable_core_name;
   const char *input_name, *output_name;
   const char * failed_assumptions_name;
@@ -434,7 +434,7 @@ picosat_main (PicoSAT ** psptr, int argc, char **argv)
   done = err = 0;
   decision_limit = -1;
   propagation_limit = -1;
-  GLOBAL_DEFAULT_PHASE = 2;
+  defaultphase = 2;
   assumptions = 0;
   force = 0;
   ALLSAT = 0;
@@ -521,7 +521,7 @@ picosat_main (PicoSAT ** psptr, int argc, char **argv)
 	    }
 	  else if (!argv[i][1] && ('0' <= argv[i][0] && argv[i][0] <= '3'))
 	    {
-	      GLOBAL_DEFAULT_PHASE = argv[i][0] - '0';
+	      defaultphase = argv[i][0] - '0';
 	    }
 	  else
 	    {
@@ -851,11 +851,11 @@ picosat_main (PicoSAT ** psptr, int argc, char **argv)
 	  picosat_enable_trace_generation (picosat);
 	}
 
-      if (GLOBAL_DEFAULT_PHASE)
+      if (defaultphase)
 	{
 	  if (verbose)
-	    fprintf (output, "c using %d as default phase\n", GLOBAL_DEFAULT_PHASE);
-	  picosat_set_global_default_phase (picosat, GLOBAL_DEFAULT_PHASE);
+	    fprintf (output, "c using %d as default phase\n", defaultphase);
+	  picosat_set_global_default_phase (picosat, defaultphase);
 	}
 
       if (propagation_limit >= 0)
