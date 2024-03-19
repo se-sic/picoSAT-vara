@@ -344,7 +344,8 @@ picosat_main (int argc, char **argv)
   input_name = "<stdin>";
   input = stdin;
   output = stdout;
-  verbose = done = err = 0;
+  verbose = 1;
+  done = err = 0;
   decision_limit = -1;
   GLOBAL_DEFAULT_PHASE = 0;
   assumptions = 0;
@@ -671,6 +672,7 @@ picosat_main (int argc, char **argv)
 		   picosat_version ());
 
 	  fprintf (output, "c %s\n", picosat_copyright ());
+	  fprintf (output, "c %s\n", picosat_config ());
 	}
 
       picosat_init ();
@@ -681,20 +683,22 @@ picosat_main (int argc, char **argv)
 
       picosat_set_verbosity (verbose);
 
-      if (trace || GLOBAL_DEFAULT_PHASE)
+      if (verbose && (trace || GLOBAL_DEFAULT_PHASE))
 	fputs ("c\n", output);
 
       if (trace)
 	{
-	  fprintf (output, "c tracing proof\n");
+	  if (verbose)
+	    fprintf (output, "c tracing proof\n");
 	  picosat_enable_trace_generation ();
 	}
 
       if (GLOBAL_DEFAULT_PHASE)
 	{
-	  fprintf (output,
-	           "c using %s as default phase\n",
-		   GLOBAL_DEFAULT_PHASE < 0 ? "FALSE" : "TRUE");
+	  if (verbose)
+	    fprintf (output,
+		     "c using %s as default phase\n",
+		     GLOBAL_DEFAULT_PHASE < 0 ? "FALSE" : "TRUE");
 
 	  picosat_set_global_default_phase (GLOBAL_DEFAULT_PHASE);
 	}
