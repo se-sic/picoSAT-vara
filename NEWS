@@ -1,5 +1,9 @@
-news for release 957 since 953
+news for release 959 since 953
 ------------------------------
+
+* fixed header comments
+
+* fixed minor compilation issues
 
 * fixed unitialized memory access problem for 'picosat_deref_partial'
   and another issue with partial models
