@@ -31,6 +31,16 @@ IN THE SOFTWARE.
 
 #include "picosat.h"
 
+/* Initialization of global feature variables */
+enum Phase GLOBAL_DEFAULT_PHASE = 0;
+int ALLSAT = 0;
+int PARTIAL = 0;
+int PLAIN = 0;
+const char * COMPACT_TRACE_NAME = 0;
+const char * EXTENDED_TRACE_NAME = 0;
+const char * RUP_TRACE_NAME = 0;
+FILE * INCREMENTAL_RUP_FILE = 0;
+
 /* By default code for 'all different constraints' is disabled, since 'NADC'
  * is defined.
  */
