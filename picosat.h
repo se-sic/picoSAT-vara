@@ -60,14 +60,14 @@ enum Phase
  RNDPHASE,
 };
 
-static __attribute__((feature_variable("DefaultPhase"))) enum Phase GLOBAL_DEFAULT_PHASE = 0;
-static __attribute__((feature_variable("AllSat"))) int ALLSAT = 0;
-static int PARTIAL = 0;
-static __attribute__((feature_variable("Plain"))) int PLAIN = 0;
-static __attribute__((feature_variable("CompactTrace"))) const char * COMPACT_TRACE_NAME = 0;
-static __attribute__((feature_variable("ExtendedTrace"))) const char * EXTENDED_TRACE_NAME = 0;
-static __attribute__((feature_variable("RUPTrace"))) const char * RUP_TRACE_NAME = 0;
-static FILE * INCREMENTAL_RUP_FILE = 0;
+extern __attribute__((feature_variable("DefaultPhase"))) enum Phase GLOBAL_DEFAULT_PHASE;
+extern __attribute__((feature_variable("AllSat"))) int ALLSAT;
+extern int PARTIAL;
+extern __attribute__((feature_variable("Plain"))) int PLAIN;
+extern __attribute__((feature_variable("CompactTrace"))) const char * COMPACT_TRACE_NAME;
+extern __attribute__((feature_variable("ExtendedTrace"))) const char * EXTENDED_TRACE_NAME;
+extern __attribute__((feature_variable("RUPTrace"))) const char * RUP_TRACE_NAME;
+extern FILE * INCREMENTAL_RUP_FILE;
 
 /*------------------------------------------------------------------------*/
 
