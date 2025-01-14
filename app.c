@@ -3,9 +3,13 @@
 #include <assert.h>
 #include <string.h>
 #include <ctype.h>
+#include <stdio.h>
 
 #define GUNZIP "gunzip -c %s"
 #define GZIP "gzip -c -f > %s"
+
+FILE * popen (const char *, const char*);
+int pclose (FILE *);
 
 static int lineno;
 static FILE *input;
@@ -14,6 +18,7 @@ static int verbose;
 static char buffer[100];
 static char *bhead = buffer;
 static const char *eob = buffer + 80;
+static FILE * incremental_rup_file;
 
 static int
 next (void)
@@ -55,6 +60,11 @@ INVALID_HEADER:
       fprintf (output, "c parsed header 'p cnf %d %d'\n", vars, clauses);
       fflush (output);
     }
+
+  picosat_adjust (vars);
+
+  if (incremental_rup_file)
+    picosat_set_incremental_rup_file (incremental_rup_file, vars, clauses);
 
   lit = 0;
 READ_LITERAL:
@@ -173,12 +183,29 @@ has_suffix (const char *str, const char *suffix)
 }
 
 static void
+write_core_variables (FILE * file)
+{
+  int i, max_idx = picosat_variables ();
+  for (i = 1; i <= max_idx; i++)
+    if (picosat_corelit (i))
+      fprintf (file, "%d\n", i);
+}
+
+static void
+write_used_variables (FILE * file)
+{
+  int i, max_idx = picosat_variables ();
+  for (i = 1; i <= max_idx; i++)
+    if (picosat_usedlit (i))
+      fprintf (file, "%d\n", i);
+}
+
+static void
 write_to_file (const char *name, const char *type, void (*writer) (FILE *))
 {
   int pclose_file, zipped = has_suffix (name, ".gz");
   FILE *file;
   char *cmd;
-
 
   if (zipped)
     {
@@ -228,28 +255,39 @@ write_to_file (const char *name, const char *type, void (*writer) (FILE *))
 "  -l <limit>   set decision limit\n" \
 "  -s <seed>    set random number generator seed\n" \
 "  -o <output>  set output file\n" \
-"  -t <trace>   generate proof trace file\n" \
-"  -c <core>    generate core clauses file\n" \
+"  -t <trace>   generate compact proof trace file\n" \
+"  -T <trace>   generate extended proof trace file\n" \
+"  -r <trace>   generate reverse unit propagation proof file\n" \
+"  -c <core>    generate clausal core file in DIMACS format\n" \
+"  -V <core>    generate file listing core variables\n" \
+"  -U <core>    generate file listing used variables\n" \
 "\n" \
 "and <input> is an optional input file in DIMACS format.\n"
 
 int
 picosat_main (int argc, char **argv)
 {
-  const char *input_name, *output_name, *core_name;
+  const char * clausal_core_name, * variable_core_name, * used_variables_name;
   int res, done, err, print_satisfying_assignment, force;
+  const char *input_name, *output_name;
   int close_input, pclose_input;
   int assumption, assumptions;
   int i, decision_limit;
   double start_time;
   unsigned seed;
   FILE *file;
+  int trace;
 
   start_time = picosat_time_stamp ();
 
+  clausal_core_name = 0;
+  variable_core_name = 0;
+  used_variables_name = 0;
   output_name = 0;
   COMPACT_TRACE_NAME = 0;
-  core_name = 0;
+  EXTENDED_TRACE_NAME = 0;
+  RUP_TRACE_NAME = 0;
+  incremental_rup_file = 0;
   close_input = 0;
   pclose_input = 0;
   input_name = "<stdin>";
@@ -257,9 +295,10 @@ picosat_main (int argc, char **argv)
   output = stdout;
   verbose = done = err = 0;
   decision_limit = -1;
-  seed = 0;
   assumptions = 0;
   force = 0;
+  trace = 0;
+  seed = 0;
 
   print_satisfying_assignment = 1;
 
@@ -365,7 +404,7 @@ picosat_main (int argc, char **argv)
 	    {
 	      fprintf (output,
 		       "*** picosat: "
-		       "multiple trace files '%s' and '%s'\n",
+		       "multiple compact trace files '%s' and '%s'\n",
 		       COMPACT_TRACE_NAME, argv[i]);
 	      err = 1;
 	    }
@@ -375,16 +414,88 @@ picosat_main (int argc, char **argv)
 	      err = 1;
 	    }
 	  else
-	    COMPACT_TRACE_NAME = argv[i];
+	    {
+	      COMPACT_TRACE_NAME = argv[i];
+	      trace = 1;
+	    }
 	}
-      else if (!strcmp (argv[i], "-c"))
+      else if (!strcmp (argv[i], "-T"))
 	{
-	  if (core_name)
+	  if (EXTENDED_TRACE_NAME)
 	    {
 	      fprintf (output,
 		       "*** picosat: "
-		       "multiple core files '%s' and '%s'\n",
-		       core_name, argv[i]);
+		       "multiple extended trace files '%s' and '%s'\n",
+		       EXTENDED_TRACE_NAME, argv[i]);
+	      err = 1;
+	    }
+	  else if (++i == argc)
+	    {
+	      fprintf (output, "*** picosat: argument ot '-T' missing\n");
+	      err = 1;
+	    }
+	  else
+	    {
+	      EXTENDED_TRACE_NAME = argv[i];
+	      trace = 1;
+	    }
+	}
+      else if (!strcmp (argv[i], "-r"))
+	{
+	  if (RUP_TRACE_NAME)
+	    {
+	      fprintf (output,
+		       "*** picosat: "
+		       "multiple RUP trace files '%s' and '%s'\n",
+		       RUP_TRACE_NAME, argv[i]);
+	      err = 1;
+	    }
+	  else if (++i == argc)
+	    {
+	      fprintf (output, "*** picosat: argument ot '-r' missing\n");
+	      err = 1;
+	    }
+	  else
+	    {
+	      RUP_TRACE_NAME = argv[i];
+	      trace = 1;
+	    }
+	}
+      else if (!strcmp (argv[i], "-R"))
+	{
+	  if (RUP_TRACE_NAME)
+	    {
+	      fprintf (output,
+		       "*** picosat: "
+		       "multiple RUP trace files '%s' and '%s'\n",
+		       RUP_TRACE_NAME, argv[i]);
+	      err = 1;
+	    }
+	  else if (++i == argc)
+	    {
+	      fprintf (output, "*** picosat: argument ot '-R' missing\n");
+	      err = 1;
+	    }
+	  else if (!(file = fopen (argv[i], "w")))
+	    {
+	      fprintf (output,
+		       "*** picosat: can not write to '%s'\n", argv[i]);
+	      err = 1;
+	    }
+	  else
+	    {
+	      RUP_TRACE_NAME = argv[i];
+	      incremental_rup_file = file;
+	    }
+	}
+      else if (!strcmp (argv[i], "-c"))
+	{
+	  if (clausal_core_name)
+	    {
+	      fprintf (output,
+		       "*** picosat: "
+		       "multiple clausal core files '%s' and '%s'\n",
+		       clausal_core_name, argv[i]);
 	      err = 1;
 	    }
 	  else if (++i == argc)
@@ -393,7 +504,49 @@ picosat_main (int argc, char **argv)
 	      err = 1;
 	    }
 	  else
-	    core_name = argv[i];
+	    {
+	      clausal_core_name = argv[i];
+	      trace = 1;
+	    }
+	}
+      else if (!strcmp (argv[i], "-V"))
+	{
+	  if (variable_core_name)
+	    {
+	      fprintf (output,
+		       "*** picosat: "
+		       "multiple variable core files '%s' and '%s'\n",
+		       variable_core_name, argv[i]);
+	      err = 1;
+	    }
+	  else if (++i == argc)
+	    {
+	      fprintf (output, "*** picosat: argument ot '-V' missing\n");
+	      err = 1;
+	    }
+	  else
+	    {
+	      variable_core_name = argv[i];
+	      trace = 1;
+	    }
+	}
+      else if (!strcmp (argv[i], "-U"))
+	{
+	  if (used_variables_name)
+	    {
+	      fprintf (output,
+		       "*** picosat: "
+		       "multiple used variable files '%s' and '%s'\n",
+		       used_variables_name, argv[i]);
+	      err = 1;
+	    }
+	  else if (++i == argc)
+	    {
+	      fprintf (output, "*** picosat: argument ot '-U' missing\n");
+	      err = 1;
+	    }
+	  else
+	    used_variables_name = argv[i];
 	}
       else if (argv[i][0] == '-')
 	{
@@ -459,12 +612,15 @@ picosat_main (int argc, char **argv)
 	}
 
       picosat_init ();
-      if (COMPACT_TRACE_NAME || core_name)
-	picosat_enable_trace_generation ();
 
-      picosat_set_output (output);
+      if (output_name)
+	picosat_set_output (output);
+
       if (verbose)
 	picosat_enable_verbosity ();
+
+      if (trace)
+	picosat_enable_trace_generation ();
 
       if (verbose)
 	fprintf (output, "c\nc parsing %s\n", input_name);
@@ -484,7 +640,9 @@ picosat_main (int argc, char **argv)
 
 	  picosat_set_seed (seed);
 	  if (verbose)
-	    fprintf (output, "c\nc random number generator seed %u\n", seed);
+	    fprintf (output,
+	             "c\nc random number generator seed %u\n", 
+		     seed);
 
 	  if (assumptions)
 	    {
@@ -518,10 +676,31 @@ picosat_main (int argc, char **argv)
 	      fputs ("s UNSATISFIABLE\n", output);
 
 	      if (COMPACT_TRACE_NAME)
-		write_to_file (COMPACT_TRACE_NAME, "trace", picosat_trace);
+		write_to_file (COMPACT_TRACE_NAME,
+		               "compact trace", 
+			       picosat_write_compact_trace);
 
-	      if (core_name)
-		write_to_file (core_name, "core", picosat_core);
+	      if (EXTENDED_TRACE_NAME)
+		write_to_file (EXTENDED_TRACE_NAME,
+		               "extended trace", 
+			       picosat_write_extended_trace);
+
+	      if (!incremental_rup_file && RUP_TRACE_NAME)
+		write_to_file (RUP_TRACE_NAME,
+		               "rup trace", 
+			       picosat_write_rup_trace);
+
+	      if (clausal_core_name)
+		write_to_file (clausal_core_name, 
+		               "clausal core", picosat_write_clausal_core);
+
+	      if (variable_core_name)
+		write_to_file (variable_core_name, 
+		               "variable core", write_core_variables);
+
+	      if (used_variables_name)
+		write_to_file (used_variables_name,
+		               "used variables", write_used_variables);
 	    }
 	  else if (res == PICOSAT_SATISFIABLE)
 	    {
@@ -538,15 +717,18 @@ picosat_main (int argc, char **argv)
 	{
 	  fputs ("c\n", output);
 	  picosat_stats ();
-	  fputs ("c\n", output);
 	  fprintf (output,
-		   "c %.2f seconds, %.1f MB maximally allocated\n",
+		   "c %.1f seconds total run time\n"
+		   "c %.1f MB maximally allocated\n",
 		   picosat_time_stamp () - start_time,
 		   picosat_max_bytes_allocated () / (double) (1 << 20));
 	}
 
       picosat_reset ();
     }
+
+  if (incremental_rup_file)
+    fclose (incremental_rup_file);
 
   if (close_input)
     fclose (input);
