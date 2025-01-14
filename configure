@@ -7,6 +7,10 @@ debug=no
 optimize=no
 stats=undefined
 trace=undefined
+static=yes
+thirtytwobit=no
+static=no
+assumptions=yes
 
 while [ $# -gt 0 ]
 do
@@ -17,15 +21,21 @@ do
     --no-stats) stats=no;;
     --trace) trace=yes;;
     --no-trace) trace=no;;
+    --ass*) assumptions=yes;;
+    --no-ass*|--nass*|-DNASS) assumptions=no;;
+    -32|--32|-m32) thirtytwobit=yes;;
+    -static|--static) static=yes;;
     -O) debug=no; optimize=yes;;
     *) cat <<EOF
-*** usage: ./configure [-g][-O][--log][--[no-]stats][--[no-]trace]
+usage: ./configure [-g][-O][--log][--[no-]stats][--[no-]trace][-32][--static]
 EOF
 exit 1
 ;;
   esac
 shift
 done
+
+echo "version ... `cat VERSION`"
 
 if [ $satcompetition = yes ]
 then
@@ -68,13 +78,19 @@ echo " $CC"
 echo -n "cflags ..."
 if [ X"$CFLAGS" = X ]
 then
-  CFLAGS=""
+  case X"$CC" in
+    *wine*|*mingw*) CFLAGS="-DNGETRUSAGE -DNALLSIGNALS";;
+    *);;
+  esac
   [ $log = yes ] && CFLAGS="$CFLAGS -DLOGGING"
   [ $stats = yes ] && CFLAGS="$CFLAGS -DSTATS"
   [ $trace = yes ] && CFLAGS="$CFLAGS -DTRACE"
+  [ $assumptions = no ] && CFLAGS="$CFLAGS -DNASS"
+  [ $static = yes ] && CFLAGS="$CFLAGS -static"
   case X"$CC" in
-    Xgcc*)
-      CFLAGS="$CFLAGS -W -Wall"
+    X*gcc*)
+      CFLAGS="$CFLAGS -Wall"
+      [ $thirtytwobit = yes ] && CFLAGS="$CFLAGS -m32"
       if [ $satcompetition = yes ]
       then
         CFLAGS="$CFLAGS -static"
@@ -86,7 +102,7 @@ then
 	CFLAGS="$CFLAGS -DNDEBUG"
 	if [ $optimize = yes ]
 	then
-	  CFLAGS="$CFLAGS -O3"
+	  CFLAGS="$CFLAGS -O3 -fomit-frame-pointer -finline-limit=10000"
 	else
 	  CFLAGS="$CFLAGS -O2"
 	fi
