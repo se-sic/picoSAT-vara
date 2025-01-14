@@ -497,7 +497,7 @@ enum State
   UNKNOWN = 4,
 };
 
-struct PicoSAT
+struct PicoSAT 
 {
   enum State state;
   int last_sat_call_result;
@@ -684,7 +684,7 @@ struct PicoSAT
   unsigned staticphasedecisions;
   unsigned skippedrestarts;
 #endif
-  int * indices, * ihead, *eoi;
+  int * indices, * ihead, *eoi; 
   unsigned sdflips;
 
   unsigned long long saved_flips;
@@ -1146,7 +1146,7 @@ new_prefix (PS * ps, const char * str)
 }
 
 static PS *
-init (void * pmgr,
+init (void * pmgr, 
       picosat_malloc pnew, picosat_realloc presize, picosat_free pdelete)
 {
   PS * ps;
@@ -1191,7 +1191,7 @@ init (void * pmgr,
 
   /* because '0' pos denotes not on heap
    */
-  ENLARGE (ps->heap, ps->hhead, ps->eoh);
+  ENLARGE (ps->heap, ps->hhead, ps->eoh); 
   ps->hhead = ps->heap + 1;
 
   ps->vinc = base2flt (1, 0);		/* initial var activity */
@@ -1242,7 +1242,7 @@ init (void * pmgr,
            "set terminal gif giant animate opt size 1024,768 x000000 xffffff"
 	   "\n");
 
-  fprintf (ps->fviscores,
+  fprintf (ps->fviscores, 
            "set output \"/tmp/picosat-viscores/gif/animated.gif\"\n");
 #endif
 #endif
@@ -1318,7 +1318,10 @@ new_clause (PS * ps, unsigned size, unsigned learned)
 #endif
 
   if (learned && size > 2)
-    *CLS2ACT (res) = ps->cinc;
+    {
+      Act * p = CLS2ACT (res);
+      *p = ps->cinc;
+    }
 
   return res;
 }
@@ -1444,7 +1447,7 @@ reset_ados (PS * ps)
 static void
 reset (PS * ps)
 {
-  ABORTIF (!ps ||
+  ABORTIF (!ps || 
            ps->state == RESET, "API usage: reset without initialization");
 
   delete_clauses (ps);
@@ -1452,8 +1455,6 @@ reset (PS * ps)
   delete_zhains (ps);
 #endif
 #ifdef NO_BINARY_CLAUSES
-  ps->implvalid = 0;
-  ps->cimplvalid = 0;
   {
     unsigned i;
     for (i = 2; i <= 2 * ps->max_var + 1; i++)
@@ -1465,7 +1466,6 @@ reset (PS * ps)
 #endif
 #ifndef NFL
   DELETEN (ps->saved, ps->saved_size);
-  ps->saved_size = 0;
 #endif
   DELETEN (ps->htps, 2 * ps->size_vars);
 #ifndef NDSC
@@ -1476,203 +1476,33 @@ reset (PS * ps)
   DELETEN (ps->jwh, 2 * ps->size_vars);
   DELETEN (ps->vars, ps->size_vars);
   DELETEN (ps->rnks, ps->size_vars);
-
   DELETEN (ps->trail, ps->eot - ps->trail);
-  ps->trail = ps->ttail = ps->ttail2 = ps->thead = ps->eot = 0;
-#ifndef NADC
-  ps->ttailado = 0;
-#endif
-
   DELETEN (ps->heap, ps->eoh - ps->heap);
-  ps->heap = ps->hhead = ps->eoh = 0;
-
   DELETEN (ps->als, ps->eoals - ps->als);
-  ps->als = ps->eoals = ps->alshead = ps->alstail = 0;
-  ps->extracted_all_failed_assumptions = 0;
-  ps->failed_assumption = 0;
-  ps->adecidelevel = 0;
   DELETEN (ps->CLS, ps->eocls - ps->CLS);
-  ps->CLS = ps->eocls = ps->clshead = 0;
   DELETEN (ps->rils, ps->eorils - ps->rils);
-  ps->rils = ps->eorils = ps->rilshead = 0;
   DELETEN (ps->cils, ps->eocils - ps->cils);
-  ps->cils = ps->eocils = ps->cilshead = 0;
   DELETEN (ps->fals, ps->eofals - ps->fals);
-  ps->fals = ps->eofals = ps->falshead = 0;
   DELETEN (ps->mass, ps->szmass);
-  ps->szmass = 0;
-  ps->mass = 0;
   DELETEN (ps->mssass, ps->szmssass);
-  ps->szmssass = 0;
-  ps->mssass = 0;
   DELETEN (ps->mcsass, ps->szmcsass);
-  ps->nmcsass = ps->szmcsass = 0;
-  ps->mcsass = 0;
   DELETEN (ps->humus, ps->szhumus);
-  ps->szhumus = 0;
-  ps->humus = 0;
-
-  ps->size_vars = 0;
-  ps->max_var = 0;
-
-  ps->mtcls = 0;
-#ifdef TRACE
-  ps->ocore = -1;
-#endif
-  ps->conflict = 0;
-
   DELETEN (ps->added, ps->eoa - ps->added);
-  ps->eoa = ps->ahead = 0;
-
   DELETEN (ps->marked, ps->eom - ps->marked);
-  ps->eom = ps->mhead = 0;
-
   DELETEN (ps->dfs, ps->eod - ps->dfs);
-  ps->eod = ps->dhead = 0;
-
   DELETEN (ps->resolved, ps->eor - ps->resolved);
-  ps->eor = ps->rhead = 0;
-
   DELETEN (ps->levels, ps->eolevels - ps->levels);
-  ps->eolevels = ps->levelshead = 0;
-
   DELETEN (ps->dused, ps->eodused - ps->dused);
-  ps->eodused = ps->dusedhead = 0;
-
   DELETEN (ps->buffer, ps->eob - ps->buffer);
-  ps->eob = ps->bhead = 0;
-
   DELETEN (ps->indices, ps->eoi - ps->indices);
-  ps->eoi = ps->ihead = 0;
-
   DELETEN (ps->soclauses, ps->eoso - ps->soclauses);
-  ps->soclauses = ps->eoso = ps->sohead = 0;
-  ps->saveorig = ps->partial = 0;
-
   delete_prefix (ps);
-
   delete (ps, ps->rline[0], ps->szrline);
   delete (ps, ps->rline[1], ps->szrline);
-  ps->rline[0] = ps->rline[1] = 0;
-  ps->szrline = ps->RCOUNT = 0;
   assert (getenv ("LEAK") || !ps->current_bytes);	/* found leak if failing */
-  ps->max_bytes = 0;
-  ps->recycled = 0;
-  ps->current_bytes = 0;
-
-  ps->lrestart = 0;
-  ps->lreduce = 0;
-  ps->lastreduceconflicts = 0;
-  ps->llocked = 0;
-  ps->lsimplify = 0;
-  ps->fsimplify = 0;
-
-  ps->seconds = 0;
-  ps->flseconds = 0;
-  ps->entered = 0;
-  ps->nentered = 0;
-  ps->measurealltimeinlib = 0;
-
-  ps->levelsum = 0.0;
-  ps->calls = 0;
-  ps->decisions = 0;
-  ps->restarts = 0;
-  ps->simps = 0;
-  ps->iterations = 0;
-  ps->reports = 0;
-  ps->lastrheader = -2;
-  ps->fixed = 0;
-#ifndef NFL
-  ps->failedlits = 0;
-  ps->simplifying = 0;
-  ps->fllimit = 0;
-#ifdef STATS
-  ps->efailedlits = ps->ifailedlits = 0;
-  ps->fltried = ps->flskipped = ps->floopsed = 0;
-  ps->flcalls = ps->flrounds = 0;
-  ps->flprops = 0;
-#endif
-#endif
-  ps->propagations = 0;
-  ps->contexts = 0;
-  ps->internals = 0;
-  ps->conflicts = 0;
-  ps->noclauses = 0;
-  ps->oadded = 0;
-  ps->lladded = 0;
-  ps->loadded = 0;
-  ps->olits = 0;
-  ps->nlclauses = 0;
-  ps->ladded = 0;
-  ps->addedclauses = 0;
-  ps->llits = 0;
-  ps->out = 0;
-#ifdef TRACE
-  ps->trace = 0;
-#endif
-  ps->rup = 0;
-  ps->rupstarted = 0;
-  ps->rupclauses = 0;
-  ps->rupvariables = 0;
-  ps->LEVEL = 0;
-
-  ps->reductions = 0;
-
-  ps->vused = 0;
-  ps->llitsadded = 0;
-  ps->visits = 0;
-#ifdef STATS
-  ps->loused = 0;
-  ps->llused = 0;
-  ps->bvisits = 0;
-  ps->tvisits = 0;
-  ps->lvisits = 0;
-  ps->othertrue = 0;
-  ps->othertrue2 = 0;
-  ps->othertruel = 0;
-  ps->othertrue2u = 0;
-  ps->othertruelu = 0;
-  ps->ltraversals = 0;
-  ps->traversals = 0;
-#ifndef NO_BINARY_CLAUSES
-  ps->antecedents = 0;
-#endif
-  ps->znts = 0;
-  ps->uips = 0;
-  ps->assumptions = 0;
-  ps->rdecisions = 0;
-  ps->sdecisions = 0;
-  ps->srecycled = 0;
-  ps->rrecycled = 0;
-#endif
-  ps->minimizedllits = 0;
-  ps->nonminimizedllits = 0;
-  ps->state = RESET;
-  ps->srng = 0;
-
-  ps->saved_flips = 0;
-  ps->saved_max_var = 0;
-  ps->min_flipped = UINT_MAX;
-
-  ps->flips = 0;
-#ifdef STATS
-  ps->FORCED = 0;
-  ps->assignments = 0;
-#endif
-
-  ps->sdflips = 0;
-
-#ifdef STATS
-  ps->staticphasedecisions = 0;
-  ps->inclreduces = 0;
-  ps->skippedrestarts = 0;
-#endif
-
 #ifdef VISCORES
   pclose (ps->fviscores);
-  ps->fviscores = 0;
 #endif
-
   if (ps->edelete)
     ps->edelete (ps->emgr, ps, sizeof *ps);
   else
@@ -1742,7 +1572,7 @@ assign_phase (PS * ps, Lit * lit)
 	      if (idx < ps->min_flipped)
 		ps->min_flipped = idx;
 
-              NOLOG (fprintf (ps->out,
+              NOLOG (fprintf (ps->out, 
 	                      "%sflipped %d\n",
 			       ps->prefix, LIT2INT (lit)));
 	    }
@@ -1949,10 +1779,8 @@ add_antecedent (PS * ps, Cls * c)
 
   if (c == &ps->impl)
     return;
-#else
-#ifdef STATS
+#elif defined(STATS) && defined(TRACE)
   ps->antecedents++;
-#endif
 #endif
   if (ps->rhead == ps->eor)
     ENLARGE (ps->resolved, ps->rhead, ps->eor);
@@ -2468,7 +2296,7 @@ REENTER:
   else
 #endif
     {
-      sortlits (ps, ps->added, size);
+      sortlits (ps, ps->added, size); 
 
       if (learned)
 	{
@@ -2518,7 +2346,7 @@ REENTER:
 	{
 	  assert (ps->dusedhead == ps->dused);
 
-	  for (p = ps->added; p < ps->ahead; p++)
+	  for (p = ps->added; p < ps->ahead; p++) 
 	    {
 	      lit = *p;
 	      if (lit->val)
@@ -2546,7 +2374,7 @@ REENTER:
 		glue++;
 	    }
 
-	  while (ps->dusedhead > ps->dused)
+	  while (ps->dusedhead > ps->dused) 
 	    {
 	      litlevel = *--ps->dusedhead;
 	      assert (ps->levels + litlevel < ps->levelshead);
@@ -2955,7 +2783,7 @@ fix_impl_lits (PS * ps, long delta)
   Ltk * s;
   Lit ** p;
 
-  for (s = ps->impls + 2; s < ps->impls + 2 * ps->max_var; s++)
+  for (s = ps->impls + 2; s <= ps->impls + 2 * ps->max_var + 1; s++)
     for (p = s->start; p < s->start + s->count; p++)
       *p += delta;
 }
@@ -3056,21 +2884,26 @@ enlarge (PS * ps, unsigned new_size_vars)
   RESIZEN (ps->vars, ps->size_vars, new_size_vars);
   RESIZEN (ps->rnks, ps->size_vars, new_size_vars);
 
-  lits_delta = ps->lits - old_lits;
-  rnks_delta = ps->rnks - old_rnks;
-
-  fix_trail_lits (ps, lits_delta);
-  fix_clause_lits (ps, lits_delta);
-  fix_added_lits (ps, lits_delta);
-  fix_assumed_lits (ps, lits_delta);
-  fix_cls_lits (ps, lits_delta);
+  if ((lits_delta = ps->lits - old_lits))
+    {
+      fix_trail_lits (ps, lits_delta);
+      fix_clause_lits (ps, lits_delta);
+      fix_added_lits (ps, lits_delta);
+      fix_assumed_lits (ps, lits_delta);
+      fix_cls_lits (ps, lits_delta);
 #ifdef NO_BINARY_CLAUSES
-  fix_impl_lits (ps, lits_delta);
+      fix_impl_lits (ps, lits_delta);
 #endif
 #ifndef NADC
-  fix_ados (ps, lits_delta);
+      fix_ados (ps, lits_delta);
 #endif
-  fix_heap_rnks (ps, rnks_delta);
+    }
+
+  if ((rnks_delta = ps->rnks - old_rnks))
+    {
+      fix_heap_rnks (ps, rnks_delta);
+    }
+
   assert (ps->mhead == ps->marked);
 
   ps->size_vars = new_size_vars;
@@ -4004,7 +3837,7 @@ fanalyze (PS * ps)
     (*--ps->mhead)->mark = 0;
 
   if (ps->verbosity)
-     fprintf (ps->out, "%sfanalyze took %.1f seconds\n",
+     fprintf (ps->out, "%sfanalyze took %.1f seconds\n", 
 	     ps->prefix, picosat_time_stamp () - start);
 }
 
@@ -4245,7 +4078,7 @@ propl (PS * ps, Lit * this)
 
       if (l == eol)
 	{
-	  while (l > c->lits + 2)
+	  while (l > c->lits + 2) 
 	    {
 	      new_lit = *--l;
 	      *l = prev;
@@ -4374,7 +4207,7 @@ enlarge_adotab (PS * ps)
 {
   /* TODO make this generic */
 
-  ABORTIF (ps->szadotab,
+  ABORTIF (ps->szadotab, 
            "internal: all different objects table needs larger initial size");
   assert (!ps->nadotab);
   ps->szadotab = 10000;
@@ -4547,7 +4380,7 @@ viscores (PS * ps)
   fprintf (ps->fviscores, "plot [0:%u] 0, 100 * (1 - 1/1.1), 100", ps->max_var);
 
   for (i = 0; i < 8; i++)
-    fprintf (ps->fviscores,
+    fprintf (ps->fviscores, 
              ", \"%s.%d\" using 1:2:3 with labels tc lt %d", 
 	     name, i, i + 1);
 
@@ -4611,11 +4444,11 @@ inc_max_var (PS * ps)
 
   assert (ps->max_var < ps->size_vars);
 
-  ps->max_var++;			/* new index of variable */
-  assert (ps->max_var);		/* no unsigned overflow */
+  if (ps->max_var + 1 == ps->size_vars)
+    enlarge (ps, ps->size_vars + 2*(ps->size_vars + 3) / 4); /* +25% */
 
-  if (ps->max_var == ps->size_vars)
-    enlarge (ps, ps->size_vars + (ps->size_vars + 3) / 4); /* +25% */
+  ps->max_var++;			/* new index of variable */
+  assert (ps->max_var);			/* no unsigned overflow */
 
   assert (ps->max_var < ps->size_vars);
 
@@ -4703,7 +4536,7 @@ backtrack (PS * ps)
 
   if (
 #ifndef NFL
-      !ps->simplifying &&
+      !ps->simplifying && 
 #endif
       !--ps->lreduceadjustcnt)
     {
@@ -4841,7 +4674,8 @@ collect_clauses (PS * ps)
 		  {
 		    Lit * other = *s;
 		    Var *v = LIT2VAR (other);
-		    if (v->level || other->val != TRUE)
+		    if (v->level ||
+		        other->val != TRUE)
 		      *r++ = other;
 		  }
 	      lstk->count = r - lstk->start;
@@ -5325,9 +5159,9 @@ CONTRADICTION:
       undo (ps, 0);
 
       LOG (if (common)
-	     fprintf (ps->out,
+	     fprintf (ps->out, 
 		      "%sfound %d literals implied by %d and %d\n",
-		      ps->prefix, common,
+		      ps->prefix, common, 
 		      LIT2INT (NOTLIT (lit)), LIT2INT (lit)));
 
 #if 1 // set to zero to disable 'lifting'
@@ -5348,7 +5182,7 @@ CONTRADICTION:
 
 	  assert (!other->val);
 
-	  LOG ( fprintf (ps->out,
+	  LOG ( fprintf (ps->out, 
 			"%sforcing %d as forced implicitly failed literal\n",
 			ps->prefix, LIT2INT (other)));
 
@@ -5606,8 +5440,7 @@ iteration (PS * ps)
 static int
 cmp_glue_activity_size (PS * ps, Cls * c, Cls * d)
 {
-  Act a;
-  Act b;
+  Act a, b, * p, * q;
 
   (void) ps;
 
@@ -5620,8 +5453,10 @@ cmp_glue_activity_size (PS * ps, Cls * c, Cls * d)
   if (c->glue > d->glue)
     return -1;
 
-  a = *CLS2ACT (c);
-  b = *CLS2ACT (d);
+  p = CLS2ACT (c);
+  q = CLS2ACT (d);
+  a = *p;
+  b = *q;
 
   if (a < b)				// then higher activity
     return -1;
@@ -5652,7 +5487,7 @@ reduce (PS * ps, unsigned percentage)
   ps->lastreduceconflicts = ps->conflicts;
 
   assert (percentage <= 100);
-  LOG ( fprintf (ps->out,
+  LOG ( fprintf (ps->out, 
                 "%sreducing %u%% learned clauses\n",
 		ps->prefix, percentage));
 
@@ -5752,7 +5587,7 @@ init_reduce (PS * ps)
     ps->lreduce = 100;
 
   if (ps->verbosity)
-     fprintf (ps->out,
+     fprintf (ps->out, 
              "%s\n%sinitial reduction limit %u clauses\n%s\n",
 	     ps->prefix, ps->prefix, ps->lreduce, ps->prefix);
 }
@@ -5933,7 +5768,7 @@ sdecide (PS * ps)
       res = RNK2LIT (r);
       if (res->val == UNDEF) break;
       (void) hpop (ps);
-      NOLOG ( fprintf (ps->out,
+      NOLOG ( fprintf (ps->out, 
                       "%shpop %u %u %u\n",
 		      ps->prefix, r - ps->rnks,
 		      FLTMANTISSA(r->score),
@@ -6141,7 +5976,7 @@ rebias (PS * ps)
 
   memset (ps->jwh, 0, 2 * (ps->max_var + 1) * sizeof *ps->jwh);
 
-  for (p = ps->oclauses; p < ps->ohead; p++)
+  for (p = ps->oclauses; p < ps->ohead; p++) 
     {
       c = *p;
 
@@ -6654,7 +6489,7 @@ leave (PS * ps)
 
 static void
 check_trace_support_and_execute (PS * ps,
-                                 FILE * file,
+                                 FILE * file, 
 				 void (*f)(PS*,FILE*,int), int fmt)
 {
   check_ready (ps);
@@ -6740,7 +6575,7 @@ picosat_init (void)
   return init (0, 0, 0, 0);
 }
 
-PicoSAT *
+PicoSAT * 
 picosat_minit (void * pmgr,
 	       picosat_malloc pnew,
 	       picosat_realloc presize,
@@ -6909,7 +6744,7 @@ picosat_enable_trace_generation (PS * ps)
   int res = 0;
   check_ready (ps);
 #ifdef TRACE
-  ABORTIF (ps->addedclauses,
+  ABORTIF (ps->addedclauses, 
            "API usage: trace generation enabled after adding clauses");
   res = ps->trace = 1;
 #endif
@@ -6975,7 +6810,7 @@ picosat_add (PS * ps, int int_lit)
   ABORTIF (ps->rup && ps->rupstarted && ps->oadded >= (unsigned)ps->rupclauses,
            "API usage: adding too many clauses after RUP header written");
 #ifndef NADC
-  ABORTIF (ps->addingtoado,
+  ABORTIF (ps->addingtoado, 
            "API usage: 'picosat_add' and 'picosat_add_ado_lit' mixed");
 #endif
   if (ps->state != READY)
@@ -7095,6 +6930,29 @@ static const char * enumstr (int i) {
 }
 
 static int
+tderef (PS * ps, int int_lit)
+{
+  Lit * lit;
+  Var * v;
+
+  assert (abs (int_lit) <= (int) ps->max_var);
+
+  lit = int2lit (ps, int_lit);
+
+  v = LIT2VAR (lit);
+  if (v->level > 0)
+    return 0;
+
+  if (lit->val == TRUE)
+    return 1;
+
+  if (lit->val == FALSE)
+    return -1;
+
+  return 0;
+}
+
+static int
 pderef (PS * ps, int int_lit)
 {
   Lit * lit;
@@ -7122,6 +6980,9 @@ minautarky (PS * ps)
 {
   unsigned * occs, maxoccs, tmpoccs, npartial;
   int * p, * c, lit, best, val;
+#ifdef LOGGING
+  int tl;
+#endif
 
   assert (!ps->partial);
 
@@ -7134,12 +6995,27 @@ minautarky (PS * ps)
     occs[*p]++;
   assert (occs[0] == ps->oadded);
 
-  for (c = ps->soclauses; c < ps->sohead; c = p + 1)
+  for (c = ps->soclauses; c < ps->sohead; c = p + 1) 
     {
-      best = 0; 
+#ifdef LOGGING
+      tl = 0;
+#endif
+      best = 0;
       maxoccs = 0;
       for (p = c; (lit = *p); p++)
 	{
+	  val = tderef (ps, lit);
+	  if (val < 0)
+	    continue;
+	  if (val > 0)
+	    {
+#ifdef LOGGING
+	      tl = 1;
+#endif
+	      best = lit;
+	      maxoccs = occs[lit];
+	    }
+
 	  val = pderef (ps, lit);
 	  if (val > 0)
 	    break;
@@ -7158,8 +7034,8 @@ minautarky (PS * ps)
       if (!lit)
 	{
 	  assert (best);
-	  LOG ( fprintf (ps->out, "%sautark %d with %d occs\n",
-	       ps->prefix, best, maxoccs));
+	  LOG ( fprintf (ps->out, "%sautark %d with %d occs%s\n",
+	       ps->prefix, best, maxoccs, tl ? " (top)" : ""));
 	  ps->vars[abs (best)].partial = 1;
 	  npartial++;
 	}
@@ -7297,9 +7173,6 @@ picosat_deref (PS * ps, int int_lit)
 int
 picosat_deref_toplevel (PS * ps, int int_lit)
 {
-  Lit *lit;
-  Var * v;
-
   check_ready (ps);
   ABORTIF (!int_lit, "API usage: can not deref zero literal");
 
@@ -7309,19 +7182,7 @@ picosat_deref_toplevel (PS * ps, int int_lit)
   if (abs (int_lit) > (int) ps->max_var)
     return 0;
 
-  lit = int2lit (ps, int_lit);
-
-  v = LIT2VAR (lit);
-  if (v->level > 0)
-    return 0;
-
-  if (lit->val == TRUE)
-    return 1;
-
-  if (lit->val == FALSE)
-    return -1;
-
-  return 0;
+  return tderef (ps, int_lit);
 }
 
 int
@@ -7383,7 +7244,7 @@ picosat_coreclause (PS * ps, int ocls)
     clsptr = ps->oclauses + ocls;
     assert (clsptr < ps->ohead);
     c = *clsptr;
-    if (c)
+    if (c) 
       res = c->core;
     if (ps->measurealltimeinlib)
       leave (ps);
@@ -7443,7 +7304,7 @@ picosat_failed_assumptions (PS * ps)
   ps->falshead = ps->fals;
   check_ready (ps);
   check_unsat_state (ps);
-  if (!ps->mtcls)
+  if (!ps->mtcls) 
     {
       assert (ps->failed_assumption);
       if (!ps->extracted_all_failed_assumptions)
@@ -7482,7 +7343,7 @@ picosat_mus_assumptions (PS * ps, void * s, void (*cb)(void*,const int*), int fi
   check_ready (ps);
   check_unsat_state (ps);
   len = 0;
-  if (!ps->mtcls)
+  if (!ps->mtcls) 
     {
       assert (ps->failed_assumption);
       if (!ps->extracted_all_failed_assumptions)
@@ -7512,7 +7373,7 @@ picosat_mus_assumptions (PS * ps, void * s, void (*cb)(void*,const int*), int fi
   assert (i == len);
   ps->mass[i] = 0;
   if (ps->verbosity)
-     fprintf (ps->out,
+     fprintf (ps->out, 
       "%sinitial set of failed assumptions of size %d out of %d (%.0f%%)\n",
       ps->prefix, len, norig, PERCENT (len, norig));
   if (cb)
@@ -7619,7 +7480,7 @@ picosat_mus_assumptions (PS * ps, void * s, void (*cb)(void*,const int*), int fi
 	      }
 
 	    if (ps->verbosity)
-	       fprintf (ps->out,
+	       fprintf (ps->out, 
 	"%sreduced set of failed assumptions of size %d out of %d (%.0f%%)\n",
 		ps->prefix, len, norig, PERCENT (len, norig));
 	    if (cb)
@@ -7678,17 +7539,17 @@ mss (PS * ps, int * a, int size)
       for (j = 0; j < k; j++)
 	picosat_assume (ps, ps->mssass[j]);
 
-      LOG ( fprintf (ps->out,
-             "%strying to add assumption %d to MSS : %d\n",
-	     ps->prefix, i, a[i]));
+      LOG ( fprintf (ps->out, 
+             "%strying to add assumption %d to MSS : %d\n", 
+	     ps->prefix, i, a[i])); 
 
       picosat_assume (ps, a[i]);
 
       res = picosat_sat (ps, -1);
       if (res == 10)
 	{
-	  LOG ( fprintf (ps->out,
-		 "%sadding assumption %d to MSS : %d\n", ps->prefix, i, a[i]));
+	  LOG ( fprintf (ps->out, 
+		 "%sadding assumption %d to MSS : %d\n", ps->prefix, i, a[i])); 
 
 	  ps->mssass[k++] = a[i];
 
@@ -7697,9 +7558,9 @@ mss (PS * ps, int * a, int size)
 	      if (picosat_deref (ps, a[j]) <= 0)
 		continue;
 
-	      LOG ( fprintf (ps->out,
-		     "%salso adding assumption %d to MSS : %d\n",
-		     ps->prefix, j, a[j]));
+	      LOG ( fprintf (ps->out, 
+		     "%salso adding assumption %d to MSS : %d\n", 
+		     ps->prefix, j, a[j])); 
 
 	      ps->mssass[k++] = a[j];
 
@@ -7715,8 +7576,8 @@ mss (PS * ps, int * a, int size)
 	{
 	  assert (res == 20);
 
-	  LOG ( fprintf (ps->out,
-		 "%signoring assumption %d in MSS : %d\n", ps->prefix, i, a[i]));
+	  LOG ( fprintf (ps->out, 
+		 "%signoring assumption %d in MSS : %d\n", ps->prefix, i, a[i])); 
 	}
     }
   ps->mssass[k] = 0;
@@ -7916,7 +7777,7 @@ picosat_next_minimal_correcting_subset_of_assumptions (PS * ps)
 }
 
 const int *
-picosat_humus (PS * ps,
+picosat_humus (PS * ps, 
                void (*callback)(void*state,int nmcs,int nhumus),
 	       void * state)
 {
@@ -7957,7 +7818,7 @@ picosat_humus (PS * ps,
 	    }
 	}
       nmcs++;
-      LOG ( fprintf (ps->out,
+      LOG ( fprintf (ps->out, 
              "%smcs %d of size %d humus %d\n",
 	     ps->prefix, nmcs, (int)(p - mcs), nhumus));
       if (callback)
@@ -8114,9 +7975,9 @@ picosat_stats (PS * ps)
 #endif
   fputc ('\n', ps->out);
 #ifdef STATS
-   fprintf (ps->out,
+   fprintf (ps->out, 
     "%sfl: %u = %.1f%% implicit, %llu oopsed, %llu tried, %llu skipped\n", 
-    ps->prefix,
+    ps->prefix, 
     ps->ifailedlits, PERCENT (ps->ifailedlits, ps->failedlits),
     ps->floopsed, ps->fltried, ps->flskipped);
 #endif
@@ -8155,16 +8016,12 @@ picosat_stats (PS * ps)
      ps->prefix, PERCENT (redlits, ps->nonminimizedllits));
 
 #ifdef STATS
-#ifndef NO_BINARY_CLAUSES
+#ifdef TRACE
    fprintf (ps->out,
 	   "%s%llu antecedents (%.1f antecedents per clause",
 	   ps->prefix, ps->antecedents, AVERAGE (ps->antecedents, ps->conflicts));
-#endif
-#ifdef TRACE
   if (ps->trace)
      fprintf (ps->out, ", %.1f bytes/antecedent)", AVERAGE (ps->znts, ps->antecedents));
-#endif
-#if !defined(NO_BINARY_CLAUSES) || defined(TRACE)
   fputs (")\n", ps->out);
 #endif
 
@@ -8172,29 +8029,29 @@ picosat_stats (PS * ps)
            ps->prefix, ps->propagations, AVERAGE (ps->propagations, ps->decisions));
    fprintf (ps->out, "%s%llu visits (%.1f per propagation)\n",
 	   ps->prefix, ps->visits, AVERAGE (ps->visits, ps->propagations));
-   fprintf (ps->out,
+   fprintf (ps->out, 
            "%s%llu binary clauses visited (%.1f%% %.1f per propagation)\n",
-	   ps->prefix, ps->bvisits,
+	   ps->prefix, ps->bvisits, 
 	   PERCENT (ps->bvisits, ps->visits),
 	   AVERAGE (ps->bvisits, ps->propagations));
-   fprintf (ps->out,
+   fprintf (ps->out, 
            "%s%llu ternary clauses visited (%.1f%% %.1f per propagation)\n",
-	   ps->prefix, ps->tvisits,
+	   ps->prefix, ps->tvisits, 
 	   PERCENT (ps->tvisits, ps->visits),
 	   AVERAGE (ps->tvisits, ps->propagations));
-   fprintf (ps->out,
+   fprintf (ps->out, 
            "%s%llu large clauses visited (%.1f%% %.1f per propagation)\n",
-	   ps->prefix, ps->lvisits,
+	   ps->prefix, ps->lvisits, 
 	   PERCENT (ps->lvisits, ps->visits),
 	   AVERAGE (ps->lvisits, ps->propagations));
    fprintf (ps->out, "%s%llu other true (%.1f%% of visited clauses)\n",
 	   ps->prefix, ps->othertrue, PERCENT (ps->othertrue, ps->visits));
-   fprintf (ps->out,
+   fprintf (ps->out, 
            "%s%llu other true in binary clauses (%.1f%%)"
 	   ", %llu upper (%.1f%%)\n",
            ps->prefix, ps->othertrue2, PERCENT (ps->othertrue2, ps->othertrue),
 	   ps->othertrue2u, PERCENT (ps->othertrue2u, ps->othertrue2));
-   fprintf (ps->out,
+   fprintf (ps->out, 
            "%s%llu other true in large clauses (%.1f%%)"
 	   ", %llu upper (%.1f%%)\n",
            ps->prefix, ps->othertruel, PERCENT (ps->othertruel, ps->othertrue),
@@ -8565,7 +8422,7 @@ picosat_save_original_clauses (PS * ps)
 }
 
 int
-picosat_deref_partial (PS * ps, int int_lit)
+picosat_deref_partial (PS * ps, int int_lit) 
 {
   check_ready (ps);
   check_sat_state (ps);
