@@ -1,5 +1,5 @@
 /****************************************************************************
-Copyright (c) 2006 - 2008, Armin Biere, Johannes Kepler University.
+Copyright (c) 2006 - 2009, Armin Biere, Johannes Kepler University.
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to
@@ -42,11 +42,18 @@ const char * RUP_TRACE_NAME = 0;
 #define NADC
 
 /* By default we enable failed literals, since 'NFL' is undefined.
+ *
 #define NFL
  */
 
 /* By default we 'detach satisfied (large) clauses', e.g. NDSC undefined.
+ *
 #define NDSC
+ */
+
+/* Do not use luby restart schedule instead of inner/outer.
+ *
+#define NLUBY
  */
 
 // #define VISCORES  /* keep this disabled */
@@ -65,9 +72,7 @@ const char * RUP_TRACE_NAME = 0;
 #define MAXRESTART	1000000 /* maximum restart interval */
 #define RDECIDE		1000	/* interval of random decisions */
 #define FRESTART	110	/* restart increase factor in percent */
-#define FREDUCE		105	/* reduce increase factor in percent  */
-#define IFREDUCE	100000	/* initial forced reduce limit */
-
+#define FREDUCE		110	/* reduce increase factor in percent  */
 #define FFLIPPED	10000	/* flipped reduce factor */
 #define FFLIPPEDPREC	10000000/* flipped reduce factor precision */
 
@@ -125,11 +130,11 @@ const char * RUP_TRACE_NAME = 0;
 #define LIT2INT(l) (LIT2SGN(l) * LIT2IDX(l))
 #define LIT2SGN(l) (((unsigned)((l) - lits) & 1) ? -1 : 1)
 #define LIT2VAR(l) (vars + LIT2IDX(l))
-#define LIT2WCHS(l) (wchs + (unsigned)((l) - lits))
+#define LIT2HTPS(l) (htps + (unsigned)((l) - lits))
 #define LIT2JWH(l) (jwh + ((l) - lits))
 
 #ifndef NDSC
-#define LIT2DWCHS(l) (dwchs + (unsigned)((l) - lits))
+#define LIT2DHTPS(l) (dhtps + (unsigned)((l) - lits))
 #endif
 
 #ifdef NO_BINARY_CLAUSES
@@ -170,7 +175,6 @@ typedef unsigned long Wrd;
 
 #define VAR2LIT(v) (lits + 2 * ((v) - vars))
 #define VAR2RNK(v) (rnks + ((v) - vars))
-#define VAR2LEVEL(v) ((v)->level)
 
 #define RNK2LIT(r) (lits + 2 * ((r) - rnks))
 #define RNK2VAR(r) (vars + ((r) - rnks))
@@ -351,6 +355,8 @@ do { \
   check_sorted (cmp, aa, nn); \
 } while (0)
 
+#define WRDSZ (sizeof (long) * 8)
+
 typedef unsigned Flt;		/* 32 bit deterministic soft float */
 typedef Flt Act;		/* clause and variable activity */
 typedef struct Blk Blk;		/* allocated memory block */
@@ -371,8 +377,8 @@ typedef struct Ltk Ltk;
 struct Ltk
 {
   Lit ** start;
-  Lit ** top;
-  Lit ** end;
+  unsigned count : WRDSZ == 32 ? 27 : 32;
+  unsigned ldsize : WRDSZ == 32 ? 5 : 32;
 };
 #endif
 
@@ -383,16 +389,17 @@ struct Lit
 
 struct Var
 {
-  Cls *reason;
-  unsigned level;
   unsigned mark : 1;
   unsigned resolved : 1;
   unsigned phase : 1;
   unsigned assigned : 1;
   unsigned used : 1;
+  unsigned failed : 1;
 #ifdef TRACE
   unsigned core : 1;
 #endif
+  unsigned level : WRDSZ == 32 ? 24 : 32;
+  Cls *reason;
 #ifndef NADC
   Lit ** inado;
   Lit ** ado;
@@ -402,8 +409,8 @@ struct Var
 
 struct Rnk
 {
-  unsigned pos;			/* 0 iff not on heap */
   Act score;
+  unsigned pos;			/* 0 iff not on heap */
 };
 
 struct Cls
@@ -411,10 +418,12 @@ struct Cls
   unsigned size;
   unsigned learned:1;
   unsigned collect:1;
-  unsigned connected:1;
   unsigned locked:1;
   unsigned fixed:1;
   unsigned used:1;
+#ifndef NDEBUG
+  unsigned connected:1;
+#endif
 #ifdef TRACE
   unsigned core:1;
   unsigned collected:1;
@@ -454,12 +463,13 @@ struct Blk
 
 static enum State
 {
-  INVALID_STATE = 0,
-  INITIALIZED_STATE = 1,
-  SAT_STATE = 2,
-  UNSAT_STATE = 3,
+  RESET = 0,
+  READY = 1,
+  SAT = 2,
+  UNSAT = 3,
+  UNKNOWN = 4,
 }
-state = INVALID_STATE;
+state = RESET;
 
 static FILE *out;
 static char * prefix;
@@ -467,11 +477,14 @@ static int verbosity;
 static unsigned level;
 static unsigned max_var;
 static unsigned size_vars;
-static Lit *lits;
+
+static Lit * __attribute__((aligned(64))) lits;
+static Var *vars;
+static Rnk *rnks;
 static Flt *jwh;
-static Cls **wchs;
+static Cls **htps;
 #ifndef NDSC
-static Cls **dwchs;
+static Cls **dhtps;
 #endif
 #ifdef NO_BINARY_CLAUSES
 static Ltk *impls;
@@ -480,17 +493,14 @@ static int implvalid, cimplvalid;
 #else
 static Cls **impls;
 #endif
-static Var *vars;
-static Rnk *rnks;
 static Lit **trail, **thead, **eot, **ttail, ** ttail2;
 #ifndef NADC
 static Lit **ttailado;
 #endif
-#ifndef NASS
-static int adecidelevel;
+static unsigned adecidelevel;
 static Lit **als, **alshead, **alstail, **eoals;
 static Lit *failed_assumption;
-#endif
+static int extracted_all_failed_assumptions;
 static Rnk **heap, **hhead, **eoh;
 static Cls **oclauses, **ohead, **eoo;	/* original clauses */
 static Cls **lclauses, **lhead, ** eol;	/* learned clauses */
@@ -504,7 +514,6 @@ static int rupstarted;
 static int rupvariables;
 static int rupclauses;
 static Cls *mtcls;
-static int assignments_and_failed_assumption_valid;
 static Cls *conflict;
 static Lit **added, **ahead, **eoa;
 static Var **marked, **mhead, **eom;
@@ -538,13 +547,19 @@ static unsigned fsimplify;
 static unsigned isimplify;
 static unsigned reductions;
 static unsigned lreduce;
+static unsigned lreduceadjustcnt;
+static unsigned lreduceadjustinc;
 static unsigned lastreduceconflicts;
-static unsigned dfreduce;
 static unsigned llocked;	/* locked large learned clauses */
-static unsigned lfixed;		/* fixed large learned clauses */
 static unsigned lrestart;
+#ifdef NLUBY
 static unsigned drestart;
 static unsigned ddrestart;
+#else
+static unsigned lubycnt;
+static unsigned lubymaxdelta;
+static int waslubymaxdelta;
+#endif
 static unsigned long long lsimplify;
 static unsigned long long propagations;
 static unsigned fixed;		/* top level assignments */
@@ -574,34 +589,35 @@ static unsigned loadded;	/* added original large clauses */
 static unsigned lladded;	/* added learned large clauses */
 static unsigned addedclauses;	/* oadded + ladded */
 static unsigned vused;		/* used variables */
+static unsigned llitsadded;	/* added learned literals */
 #ifdef STATS
 static unsigned loused;		/* used large original clauses */
 static unsigned llused;		/* used large learned clauses */
-static unsigned llitsadded;	/* added learned literals */
 static unsigned long long visits;
+static unsigned long long bvisits;
+static unsigned long long tvisits;
+static unsigned long long lvisits;
 static unsigned long long othertrue;
 static unsigned long long othertrue2;
 static unsigned long long othertruel;
 static unsigned long long othertrue2u;
 static unsigned long long othertruelu;
+static unsigned long long ltraversals;
 static unsigned long long traversals;
 #ifdef TRACE
 static unsigned long long antecedents;
 #endif
 static unsigned uips;
-static unsigned minimizedllits;
-static unsigned nonminimizedllits;
 static unsigned znts;
-#ifndef NASS
 static unsigned assumptions;
-#endif
 static unsigned rdecisions;
 static unsigned sdecisions;
 static size_t srecycled;
 static size_t rrecycled;
-static unsigned freductions;
 static unsigned long long derefs;
 #endif
+static unsigned minimizedllits;
+static unsigned nonminimizedllits;
 #ifndef NADC
 static Lit *** ados, *** hados, *** eados;
 static Lit *** adotab;
@@ -617,11 +633,11 @@ static unsigned long long flips;
 #ifdef STATS
 static unsigned long long forced;
 static unsigned long long assignments;
-static unsigned skippedrestarts;
 static unsigned inclreduces;
 static unsigned staticphasedecisions;
+static unsigned skippedrestarts;
 #endif
-static int * indices, * ihead, *eoi;
+static int * indices, * ihead, *eoi; 
 static unsigned sdflips;
 
 static unsigned long long saved_flips;
@@ -878,7 +894,7 @@ new (size_t size)
 {
   size_t bytes;
   Blk *b;
-
+  
   if (!size)
     return 0;
 
@@ -1002,7 +1018,8 @@ lit2sign (Lit * lit)
   return ((lit - lits) & 1) ? -1 : 1;
 }
 
-int
+
+static int
 lit2int (Lit * l)
 {
   return lit2idx (l) * lit2sign (l);
@@ -1090,7 +1107,7 @@ delete_prefix (void)
 {
   if (!prefix)
     return;
-
+    
   delete (prefix, strlen (prefix) + 1);
   prefix = 0;
 }
@@ -1109,12 +1126,12 @@ init (void)
 {
   static int count;
 
-  ABORTIF (state != INVALID_STATE, "multiple initializations");
+  ABORTIF (state != RESET, "API usage: multiple initializations");
 
   count = 3 - !enew - !eresize - !edelete;
-  ABORTIF (count && !enew, "client failed to call 'picosat_set_new'");
-  ABORTIF (count && !eresize, "client failed to call 'picosat_set_resize'");
-  ABORTIF (count && !edelete, "client failed to call 'picosat_set_delete'");
+  ABORTIF (count && !enew, "API usage: missing 'picosat_set_new'");
+  ABORTIF (count && !eresize, "API usage: missing 'picosat_set_resize'");
+  ABORTIF (count && !edelete, "API usage: missing 'picosat_set_delete'");
 
   assert (!max_var);		/* check for proper reset */
   assert (!size_vars);		/* check for proper reset */
@@ -1123,9 +1140,9 @@ init (void)
 
   NEWN (lits, 2 * size_vars);
   NEWN (jwh, 2 * size_vars);
-  NEWN (wchs, 2 * size_vars);
+  NEWN (htps, 2 * size_vars);
 #ifndef NDSC
-  NEWN (dwchs, 2 * size_vars);
+  NEWN (dhtps, 2 * size_vars);
 #endif
   NEWN (impls, 2 * size_vars);
   NEWN (vars, size_vars);
@@ -1135,10 +1152,10 @@ init (void)
   hhead = heap + 1;
 
   vinc = base2flt (1, 0);	/* initial variable activity */
-  ifvinc = ascii2flt ("1.1");	/* variable score rescore factor */
+  ifvinc = ascii2flt ("1.05");	/* variable score rescore factor */
 #ifdef VISCORES
-  fvinc = ascii2flt ("0.9090909");	/*     1/f =     1/1.1 */
-  nvinc = ascii2flt ("0.0909091");	/* 1 - 1/f = 1 - 1/1.1 */
+  fvinc = ascii2flt ("0.9523809");	/*     1/f =     1/1.1 */
+  nvinc = ascii2flt ("0.0476191");	/* 1 - 1/f = 1 - 1/1.1 */
 #endif
   lscore = base2flt (1, 90);	/* variable activity rescore limit */
   ilvinc = base2flt (1, -90);	/* inverse of 'lscore' */
@@ -1147,6 +1164,8 @@ init (void)
   fcinc = ascii2flt ("1.001");	/* clause activity rescore factor */
   lcinc = base2flt (1, 90);	/* clause activity rescore limit */
   ilcinc = base2flt (1, -90);	/* inverse of 'ilcinc' */
+
+  lreduceadjustcnt = lreduceadjustinc = 100;
 
   out = stdout;
   new_prefix ("c ");
@@ -1179,11 +1198,11 @@ init (void)
            "set terminal gif giant animate opt size 1024,768 x000000 xffffff"
 	   "\n");
 
-  fprintf (fviscores,
+  fprintf (fviscores, 
            "set output \"/tmp/picosat-viscores/gif/animated.gif\"\n");
 #endif
 #endif
-  state = INITIALIZED_STATE;
+  state = READY;
 }
 
 static size_t
@@ -1239,13 +1258,17 @@ new_clause (unsigned size, unsigned learned)
   res->learned = learned;
 
   res->collect = 0;
+#ifndef NDEBUG
   res->connected = 0;
+#endif
   res->locked = 0;
   res->fixed = 0;
   res->used = 0;
 #ifdef TRACE
   res->core = 0;
+#ifndef NDEBUG
   res->collected = 0;
+#endif
 #endif
 
   if (learned && size > 2)
@@ -1323,7 +1346,8 @@ delete_zhains (void)
 static void
 lrelease (Ltk * stk)
 {
-  DELETEN (stk->start, stk->end - stk->start);
+  if (stk->start)
+    DELETEN (stk->start, (1 << (stk->ldsize)));
   memset (stk, 0, sizeof (*stk));
 }
 #endif
@@ -1374,7 +1398,7 @@ reset_ados (void)
 static void
 reset (void)
 {
-  ABORTIF (state == INVALID_STATE, "reset without initialization");
+  ABORTIF (state == RESET, "API usage: reset without initialization");
 
   delete_clauses ();
 #ifdef TRACE
@@ -1396,9 +1420,9 @@ reset (void)
   DELETEN (saved, saved_size);
   saved_size = 0;
 #endif
-  DELETEN (wchs, 2 * size_vars);
+  DELETEN (htps, 2 * size_vars);
 #ifndef NDSC
-  DELETEN (dwchs, 2 * size_vars);
+  DELETEN (dhtps, 2 * size_vars);
 #endif
   DELETEN (impls, 2 * size_vars);
   DELETEN (lits, 2 * size_vars);
@@ -1415,12 +1439,11 @@ reset (void)
   DELETEN (heap, eoh - heap);
   heap = hhead = eoh = 0;
 
-#ifndef NASS
   DELETEN (als, eoals - als);
   als = eoals = alshead = alstail = 0;
+  extracted_all_failed_assumptions = 0;
   failed_assumption = 0;
   adecidelevel = 0;
-#endif
 
   size_vars = 0;
   max_var = 0;
@@ -1464,7 +1487,6 @@ reset (void)
   lreduce = 0;
   lastreduceconflicts = 0;
   llocked = 0;
-  lfixed = 0;
   lsimplify = 0;
   fsimplify = 0;
 
@@ -1517,33 +1539,35 @@ reset (void)
   reductions = 0;
 
   vused = 0;
+  llitsadded = 0;
 #ifdef STATS
   loused = 0;
   llused = 0;
   visits = 0;
+  bvisits = 0;
+  tvisits = 0;
+  lvisits = 0;
   othertrue = 0;
   othertrue2 = 0;
   othertruel = 0;
   othertrue2u = 0;
   othertruelu = 0;
+  ltraversals = 0;
   traversals = 0;
 #ifndef NO_BINARY_CLAUSES
   antecedents = 0;
 #endif
   znts = 0;
   uips = 0;
-  minimizedllits = 0;
-  nonminimizedllits = 0;
-  llitsadded = 0;
-#ifndef NASS
   assumptions = 0;
-#endif
   rdecisions = 0;
   sdecisions = 0;
   srecycled = 0;
   rrecycled = 0;
 #endif
-  state = INVALID_STATE;
+  minimizedllits = 0;
+  nonminimizedllits = 0;
+  state = RESET;
   srng = 0;
 
   saved_flips = 0;
@@ -1560,8 +1584,8 @@ reset (void)
 
 #ifdef STATS
   staticphasedecisions = 0;
-  skippedrestarts = 0;
   inclreduces = 0;
+  skippedrestarts = 0;
 #endif
 
   emgr = 0;
@@ -1577,6 +1601,7 @@ reset (void)
 inline static void
 tpush (Lit * lit)
 {
+  assert (lits < lit && lit <= lits + 2* max_var + 1);
   if (thead == eot)
     {
       unsigned ttail2count = ttail2 - trail;
@@ -1654,7 +1679,7 @@ assign (Lit * lit, Cls * reason)
 #ifdef STATS
   assignments++;
 #endif
-  VAR2LEVEL (v) = level;
+  v->level = level;
   assign_phase (lit);
   assign_reason (v, reason);
   tpush (lit);
@@ -1679,7 +1704,7 @@ cmp_added (Lit * k, Lit * l)
   if (a != UNDEF)
   {
     assert (b != UNDEF);
-    res = VAR2LEVEL (v) - VAR2LEVEL (u);
+    res = v->level - u->level;
     if (res)
       return res;			/* larger level first */
   }
@@ -1858,6 +1883,23 @@ add_lit (Lit * lit)
   *ahead++ = lit;
 }
 
+static void
+push_var_as_marked (Var * v)
+{
+  if (mhead == eom)
+    ENLARGE (marked, mhead, eom);
+
+  *mhead++ = v;
+}
+
+static void
+mark_var (Var * v)
+{
+  assert (!v->mark);
+  v->mark = 1;
+  push_var_as_marked (v);
+}
+
 /* Whenever we have a top level derived unit we really should derive a unit
  * clause otherwise the resolutions in 'add_simplified_clause' become
  * incorrect.
@@ -1928,7 +1970,7 @@ fixvar (Var * v)
   Rnk * r;
 
   assert (VAR2LIT (v) != UNDEF);
-  assert (!VAR2LEVEL (v));
+  assert (!v->level);
 
   fixed++;
 
@@ -1944,6 +1986,16 @@ fixvar (Var * v)
     return;
 
   hup (r);
+}
+
+static void
+use_var (Var * v)
+{
+  if (v->used)
+    return;
+
+  v->used = 1;
+  vused++;
 }
 
 static void
@@ -1970,11 +2022,8 @@ assign_forced (Lit * lit, Cls * reason)
        dumpclsnl (reason));
 
   v = LIT2VAR (lit);
-  if (!level && !v->used)
-    {
-      vused++;
-      v->used = 1;
-    }
+  if (!level)
+    use_var (v);
 
   if (reason && !level && reason->size > 1)
     reason = resolve_top_level_unit (lit, reason);
@@ -2011,19 +2060,35 @@ lpush (Lit * lit, Cls * cls)
 {
   int pos = (cls->lits[0] == lit);
   Ltk * s = LIT2IMPLS (lit);
+  unsigned oldsize, newsize;
 
   assert (cls->size == 2);
 
-  if (s->top == s->end)
-    ENLARGE (s->start, s->top, s->end);
+  if (!s->start)
+    {
+      assert (!s->count);
+      assert (!s->ldsize);
+      NEWN (s->start, 1);
+    }
+  else
+    {
+      oldsize = (1 << (s->ldsize));
+      assert (s->count <= oldsize);
+      if (s->count == oldsize)
+	{
+	  newsize = 2 * oldsize;
+	  RESIZEN (s->start, oldsize, newsize);
+	  s->ldsize++;
+	}
+    }
 
-  *s->top++ = cls->lits[pos];
+  s->start[s->count++] = cls->lits[pos];
 }
 
 #endif
 
 static void
-connect_watch (Lit * lit, Cls * cls)
+connect_head_tail (Lit * lit, Cls * cls)
 {
   Cls ** s;
   assert (cls->size >= 1);
@@ -2037,7 +2102,7 @@ connect_watch (Lit * lit, Cls * cls)
 #endif
     }
   else
-    s = LIT2WCHS (lit);
+    s = LIT2HTPS (lit);
 
   if (cls->lits[0] != lit)
     {
@@ -2278,9 +2343,7 @@ REENTER:
   if (learned)
     {
       ladded++;
-#ifdef STATS
       llitsadded += size;
-#endif
       if (size > 2)
 	{
 	  lladded++;
@@ -2313,17 +2376,38 @@ REENTER:
       if (learned)
 	{
 	  if (lhead == eol)
-	    ENLARGE (lclauses, lhead, eol);
+	    {
+	      ENLARGE (lclauses, lhead, eol);
+
+	      /* A very difficult to find bug, which only occurs if the
+	       * learned clauses stack is immediately allocated before the
+	       * original clauses stack without padding.  In this case, we
+	       * have 'SOC == EOC', which terminates all loops using the
+	       * idiom 'for (p = SOC; p != EOC; p = NXC(p))' immediately.
+	       * Unfortunately this occurred in 'fix_clause_lits' after
+	       * using a recent version of the memory allocator of 'Google'
+	       * perftools in the context of one large benchmark for
+	       * 'boolector'.
+	       */
+	      if (eol == oclauses)
+		ENLARGE (lclauses, lhead, eol);
+	    }
 
 	  idx = LIDX2IDX (lhead - lclauses);
 	}
       else
 	{
 	  if (ohead == eoo)
-	    ENLARGE (oclauses, ohead, eoo);
+	    {
+	      ENLARGE (oclauses, ohead, eoo);
+	      if (eol == oclauses)
+		ENLARGE (oclauses, ohead, eoo);	/* dito */
+	    }
 
 	  idx = OIDX2IDX (ohead - oclauses);
 	}
+
+      assert (eol != oclauses);			/* dito */
 
       res = new_clause (size, learned);
 
@@ -2340,6 +2424,7 @@ REENTER:
       if (trace && learned)
 	assert (zhead - zhains == lhead - lclauses);
 #endif
+      assert (lhead != oclauses);		/* dito */
     }
 
   if (learned && rup)
@@ -2382,14 +2467,13 @@ REENTER:
 
   if (size > 0)
     {
-      connect_watch (res->lits[0], res);
+      connect_head_tail (res->lits[0], res);
       if (size > 1)
-	connect_watch (res->lits[1], res);
+	connect_head_tail (res->lits[1], res);
     }
 
   if (size == 0)
     {
-      // assert (!level);
       if (!mtcls)
 	mtcls = res;
     }
@@ -2397,7 +2481,9 @@ REENTER:
 #ifdef NO_BINARY_CLAUSES
   if (size != 2)
 #endif
+#ifndef NDEBUG
     res->connected = 1;
+#endif
 
   LOG (fprintf (out, "%s%s ", prefix, learned ? "learned" : "original");
        dumpclsnl (res));
@@ -2417,12 +2503,7 @@ REENTER:
 	{
 	  lit = *p;
 	  v = LIT2VAR (lit);
-
-	  if (!v->used)
-	    {
-	      vused++;
-	      v->used = 1;
-	    }
+	  use_var (v);
 
 	  if (lit->val == FALSE)
 	    {
@@ -2452,11 +2533,7 @@ REENTER:
 	    lit = *p;
 
 	  v = LIT2VAR (*p);
-	  if (!v->used)
-	    {
-	      v->used = 1;
-	      vused++;
-	    }
+	  use_var (v);
 	}
       assert (lit);
 
@@ -2511,9 +2588,9 @@ trivial_clause (void)
       if (prev == this)		/* skip repeated literals */
 	continue;
 
-      /* Top level satisfied ?
+      /* Top level satisfied ? 
        */
-      if (this->val == TRUE && !VAR2LEVEL (v))
+      if (this->val == TRUE && !v->level)
 	 return 1;
 
       if (prev == NOTLIT (this))/* found pair of dual literals */
@@ -2568,7 +2645,7 @@ add_ado (void)
 #endif
 
   ABORTIF (ados < hados && llength (ados[0]) != len,
-           "non matching all different constraint object lengths");
+           "internal: non matching all different constraint object lengths");
 
   if (hados == eados)
     ENLARGE (ados, hados, eados);
@@ -2583,7 +2660,8 @@ add_ado (void)
     {
       lit = *p++;
       v = LIT2VAR (lit);
-      ABORTIF (v->inado, "variable in multiple all different objects");
+      ABORTIF (v->inado,
+               "internal: variable in multiple all different objects");
       v->inado = ado;
       if (!u && !lit->val)
 	u = v;
@@ -2596,6 +2674,7 @@ add_ado (void)
   /* TODO simply do a conflict test as in propado */
 
   ABORTIF (!u,
+    "internal: "
     "adding fully instantiated all different object not implemented yet");
 
   assert (u);
@@ -2608,33 +2687,28 @@ add_ado (void)
 
 #endif
 
-static Rnk *
-hpop (void)
+static void
+hdown (Rnk * r)
 {
-  Rnk *res, *last, *child, *other;
-  int end, lpos, cpos, opos;
+  unsigned end, rpos, cpos, opos;
+  Rnk *child, *other;
 
-  assert (hhead > heap);
+  assert (r->pos > 0);
+  assert (heap[r->pos] == r);
 
-  res = heap[lpos = 1];
-  res->pos = 0;
-
-  end = --hhead - heap;
-  if (end == 1)
-    return res;
-
-  last = heap[end];
+  end = hhead - heap;
+  rpos = r->pos;
 
   for (;;)
     {
-      cpos = 2 * lpos;
+      cpos = 2 * rpos;
       if (cpos >= end)
 	break;
 
       opos = cpos + 1;
       child = heap[cpos];
 
-      if (cmp_rnk (last, child) < 0)
+      if (cmp_rnk (r, child) < 0)
 	{
 	  if (opos < end)
 	    {
@@ -2651,7 +2725,7 @@ hpop (void)
 	{
 	  child = heap[opos];
 
-	  if (cmp_rnk (last, child) >= 0)
+	  if (cmp_rnk (r, child) >= 0)
 	    break;
 
 	  cpos = opos;
@@ -2659,13 +2733,41 @@ hpop (void)
       else
 	break;
 
-      heap[lpos] = child;
-      child->pos = lpos;
-      lpos = cpos;
+      heap[rpos] = child;
+      child->pos = rpos;
+      rpos = cpos;
     }
 
-  last->pos = lpos;
-  heap[lpos] = last;
+  r->pos = rpos;
+  heap[rpos] = r;
+}
+
+static Rnk *
+htop (void)
+{
+  assert (hhead > heap);
+  return heap[1];
+}
+
+static Rnk *
+hpop (void)
+{
+  Rnk *res, *last;
+  unsigned end;
+
+  assert (hhead > heap);
+
+  res = heap[1];
+  res->pos = 0;
+
+  end = --hhead - heap;
+  if (end == 1)
+    return res;
+
+  last = heap[end];
+
+  heap[last->pos = 1] = last;
+  hdown (last);
 
   return res;
 }
@@ -2699,7 +2801,7 @@ fix_impl_lits (long delta)
   Lit ** p;
 
   for (s = impls + 2; s < impls + 2 * max_var; s++)
-    for (p = s->start; p < s->top; p++)
+    for (p = s->start; p < s->start + s->count; p++)
       *p += delta;
 }
 #endif
@@ -2720,7 +2822,7 @@ fix_clause_lits (long delta)
       eol = end_of_lits (clause);
       while (q < eol)
 	{
-	  assert (q - clause->lits <= clause->size);
+	  assert (q - clause->lits <= (int) clause->size);
 	  lit = *q;
 	  lit += delta;
 	  *q++ = lit;
@@ -2736,7 +2838,6 @@ fix_added_lits (long delta)
     *p += delta;
 }
 
-#ifndef NASS
 static void
 fix_assumed_lits (long delta)
 {
@@ -2744,7 +2845,6 @@ fix_assumed_lits (long delta)
   for (p = als; p < alshead; p++)
     *p += delta;
 }
-#endif
 
 static void
 fix_heap_rnks (long delta)
@@ -2780,16 +2880,15 @@ static void
 enlarge (unsigned new_size_vars)
 {
   long rnks_delta, lits_delta, vars_delta;
-
   Lit *old_lits = lits;
   Rnk *old_rnks = rnks;
   Var *old_vars = vars;
 
   RESIZEN (lits, 2 * size_vars, 2 * new_size_vars);
   RESIZEN (jwh, 2 * size_vars, 2 * new_size_vars);
-  RESIZEN (wchs, 2 * size_vars, 2 * new_size_vars);
+  RESIZEN (htps, 2 * size_vars, 2 * new_size_vars);
 #ifndef NDSC
-  RESIZEN (dwchs, 2 * size_vars, 2 * new_size_vars);
+  RESIZEN (dhtps, 2 * size_vars, 2 * new_size_vars);
 #endif
   RESIZEN (impls, 2 * size_vars, 2 * new_size_vars);
   RESIZEN (vars, size_vars, new_size_vars);
@@ -2802,9 +2901,7 @@ enlarge (unsigned new_size_vars)
   fix_trail_lits (lits_delta);
   fix_clause_lits (lits_delta);
   fix_added_lits (lits_delta);
-#ifndef NASS
   fix_assumed_lits (lits_delta);
-#endif
 #ifdef NO_BINARY_CLAUSES
   fix_impl_lits (lits_delta);
 #endif
@@ -2862,7 +2959,7 @@ unassign (Lit * lit)
   {
     Cls * p, * next, ** q;
 
-    q = LIT2DWCHS (lit);
+    q = LIT2DHTPS (lit);
     p = *q;
     *q = 0;
 
@@ -2882,8 +2979,8 @@ unassign (Lit * lit)
 	  }
 
 	next = *q;
-	*q = *LIT2WCHS (other);
-	*LIT2WCHS (other) = p;
+	*q = *LIT2HTPS (other);
+	*LIT2HTPS (other) = p;
 	p = next;
       }
   }
@@ -2932,7 +3029,7 @@ mark_clause_to_be_collected (Cls * cls)
 }
 
 static void
-undo (int new_level)
+undo (unsigned new_level)
 {
   Lit *lit;
   Var *v;
@@ -2941,7 +3038,7 @@ undo (int new_level)
     {
       lit = *--thead;
       v = LIT2VAR (lit);
-      if (VAR2LEVEL (v) == new_level)
+      if (v->level == new_level)
 	{
 	  thead++;		/* fix pre decrement */
 	  break;
@@ -2966,14 +3063,12 @@ undo (int new_level)
     resetadoconflict ();
 #endif
   conflict = mtcls;
-#ifndef NASS
   if (level < adecidelevel)
     {
       assert (als < alshead);
       adecidelevel = 0;
       alstail = als;
     }
-#endif
   LOG (fprintf (out, "%sback to level %u\n", prefix, level));
 }
 
@@ -3014,7 +3109,6 @@ original_clauses_satisfied (void)
     }
 }
 
-#ifndef NASS
 static void
 assumptions_satisfied (void)
 {
@@ -3026,7 +3120,6 @@ assumptions_satisfied (void)
       assert (lit->val == TRUE);
     }
 }
-#endif
 
 #endif
 
@@ -3075,6 +3168,8 @@ dynamic_flips_per_assignment_per_mille (void)
   return sdflips / (FFLIPPEDPREC / 1000);
 }
 
+#ifdef NLUBY
+
 static int
 high_agility (void)
 {
@@ -3087,15 +3182,25 @@ very_high_agility (void)
   return dynamic_flips_per_assignment_per_mille () >= 250;
 }
 
+#else
+
+static int
+medium_agility (void)
+{
+  return dynamic_flips_per_assignment_per_mille () >= 230;
+}
+
+#endif
+
 static void
-relemdata (int fp, double val)
+relemdata (void)
 {
   char *p;
   int x;
 
   if (reports < 0)
     {
-      /* strip trailing white space
+      /* strip trailing white space 
        */
       for (x = 0; x <= 1; x++)
 	{
@@ -3199,17 +3304,14 @@ relem (const char *name, int fp, double val)
   if (name)
     relemhead (name, fp, val);
   else
-    relemdata (fp, val);
+    relemdata ();
 }
 
 static unsigned
 reduce_limit_on_lclauses (void)
 {
   unsigned res = lreduce;
-
   res += llocked;
-  res += lfixed;
-
   return res;
 }
 
@@ -3235,16 +3337,15 @@ report (int level, char type)
       relem ("level", 1, avglevel ());
       assert (fixed <=  max_var);
       relem ("variables", 0, max_var - fixed);
-      relem ("clauses", 0, noclauses);
-#ifdef STATS
-      relem ("used", 1, PERCENT (loused, loadded));
-#endif
+      relem ("used", 1, PERCENT (vused, max_var));
+      relem ("original", 0, noclauses);
       relem ("conflicts", 0, conflicts);
-      relem ("decisions", 0, decisions);
+      //relem ("decisions", 0, decisions);
       // relem ("conf/dec", 1, PERCENT(conflicts,decisions));
       // relem ("limit", 0, reduce_limit_on_lclauses ());
-      // relem ("learned", 0, nlclauses);
+      relem ("learned", 0, nlclauses);
       // relem ("limit", 1, PERCENT (nlclauses, reduce_limit_on_lclauses ()));
+      relem ("limit", 0, lreduce);
 #ifdef STATS
       relem ("learning", 1, PERCENT (llused, lladded));
 #endif
@@ -3290,11 +3391,9 @@ static int
 satisfied (void)
 {
   assert (!mtcls);
-#ifndef NASS
   assert (!failed_assumption);
   if (alstail < alshead)
     return 0;
-#endif
   assert (!conflict);
   assert (bcp_queue_is_empty ());
   return thead == trail + max_var;	/* all assigned */
@@ -3319,24 +3418,31 @@ inc_score (Var * v)
   Flt score;
   Rnk *r;
 
+#ifndef NFL
+  if (simplifying)
+    return;
+#endif
+
+  if (!v->level)
+    return;
+
   r = VAR2RNK (v);
   score = r->score;
 
-  if (score != INFFLT)
-    {
-      score = addflt (score, vinc);
-      assert (score < INFFLT);
-      r->score = score;
-      if (r->pos > 0)
-	hup (r);
+  assert (score != INFFLT);
 
-      if (score > lscore)
-	vrescore ();
-    }
+  score = addflt (score, vinc);
+  assert (score < INFFLT);
+  r->score = score;
+  if (r->pos > 0)
+    hup (r);
+
+  if (score > lscore)
+    vrescore ();
 }
 
 static void
-inc_activity (Cls * cls, Act inc)
+inc_activity (Cls * cls)
 {
   Act *p;
 
@@ -3347,14 +3453,7 @@ inc_activity (Cls * cls, Act inc)
     return;
 
   p = CLS2ACT (cls);
-  *p = addflt (*p, inc);
-}
-
-static void
-add_antecedent_and_inc_activity (Cls * c)
-{
-  add_antecedent (c);
-  inc_activity (c, cinc);
+  *p = addflt (*p, cinc);
 }
 
 static unsigned
@@ -3364,130 +3463,143 @@ hashlevel (unsigned l)
 }
 
 static void
-inc_marked (void)
+push (Var * v)
 {
-  Var ** m;
-  for (m = marked; m < mhead; m++)
-    inc_score (*m);
+  if (dhead == eod)
+    ENLARGE (dfs, dhead, eod);
+
+  *dhead++ = v;
+}
+
+static Var *
+pop (void)
+{
+  assert (dfs < dhead);
+  return *--dhead;
 }
 
 static void
 analyze (void)
 {
-  unsigned tcount = (unsigned)(thead - trail), open, minlevel, siglevels;
-  Var *v, *u, *uip, **m, *start, **original, **old;
+  unsigned open, minlevel, siglevels, l, old, i, orig;
   Lit *this, *other, **p, **q, **eol;
+  Var *v, *u, **m, *start, *uip;
   Cls *c;
 
   assert (conflict);
 
-  /* 1. Make sure that the four stacks 'marked', 'added', 'resolved', and
-   * 'dfs' are large enough.  The number of currenlty assigned variables is
-   * an upper limit on the number of marked variables, resolved clauses,
-   * added literals and the search stack.
-   */
-  while (tcount > (unsigned)(eoa - added))
-    ENLARGE (added, ahead, eoa);
-
-  /* need to hold 'conflict' as well */
-  while (tcount >= (unsigned)(eor - resolved))
-    ENLARGE (resolved, rhead, eor);
-
-  while (tcount > (unsigned)(eom - marked))
-    ENLARGE (marked, mhead, eom);
-
-  while (tcount > (unsigned)(eod - dfs))
-    ENLARGE (dfs, dhead, eod);
-
+  assert (ahead == added);
   assert (mhead == marked);
+  assert (rhead == resolved);
 
   /* 2. Search for First UIP variable and mark all resolved variables.  At
    * the same time determine the minimum decision level involved.  Increase
    * activities of resolved variables.
    */
   q = thead;
-  this = 0;
   open = 0;
   minlevel = level;
   siglevels = 0;
+  uip = 0;
 
   c = conflict;
-  uip = 0;
 
   for (;;)
     {
+      add_antecedent (c);
+      inc_activity (c);
       eol = end_of_lits (c);
       for (p = c->lits; p < eol; p++)
 	{
 	  other = *p;
-	  if (other == this)
+
+	  if (other->val == TRUE)
 	    continue;
 
 	  assert (other->val == FALSE);
-	  u = LIT2VAR (other);
 
+	  u = LIT2VAR (other);
 	  if (u->mark)
 	    continue;
 
 	  u->mark = 1;
-	  *mhead++ = u;
+	  inc_score (u);
+	  use_var (u);
 
-	  if (VAR2LEVEL (u) == level)
-	    open++;
+	  if (u->level == level)
+	    {
+	      open++;
+	    }
 	  else
 	    {
-	      if (VAR2LEVEL (u) < minlevel)
-		minlevel = VAR2LEVEL (u);
+	      push_var_as_marked (u);
 
-	      siglevels |= hashlevel (VAR2LEVEL (u));
+	      if (u->level)
+		{
+		  /* The statistics counter 'nonminimizedllits' sums up the
+		   * number of literals that would be added if only the
+		   * 'first UIP' scheme for learned clauses would be used
+		   * and no clause minimization.
+		   */
+		  nonminimizedllits++;
+
+		  if (u->level < minlevel)
+		    minlevel = u->level;
+
+		  siglevels |= hashlevel (u->level);
+		}
+	      else
+		{
+		  assert (!u->level);
+		  assert (u->reason);
+		}
 	    }
 	}
 
       do
 	{
 	  if (q == trail)
-	    goto DONE_FIRST_UIP;
+	    {
+	      uip = 0;
+	      goto DONE_FIRST_UIP;
+	    }
 
 	  this = *--q;
-	  v = LIT2VAR (this);
+	  uip = LIT2VAR (this);
 	}
-      while (!v->mark);
+      while (!uip->mark);
 
-      c = var2reason (v);
+      uip->mark = 0;
+
+      c = var2reason (uip);
 #ifdef NO_BINARY_CLAUSES
       if (c == &impl)
 	resetimpl ();
 #endif
-      open--;
-
-      if (!open)
-	{
-	  uip = v;
-
-	  if (level)
-	    break;
-	}
-
-      if (!c)
+     open--;
+     if ((!open && level) || !c)
 	break;
+
+     assert (c);
     }
 
 DONE_FIRST_UIP:
-  assert (mhead <= eom);	/* no overflow */
 
-#ifdef STATS
-  if (uip && uip->reason)
-    uips++;
-
-  /* The statistics counter 'nonminimizedllits' sums up the number of
-   * literals that would be added if only the 'first UIP' scheme for learned
-   * clauses would be used and no clause minimization.
-   */
-  nonminimizedllits += open + 1;	/* vars on this level (incl. UIP) */
-  for (m = marked; m < mhead; m++)
-    if (VAR2LEVEL (*m) < level)		/* all other cut variables */
+  if (uip)
+    {
+      assert (level);
+      this = VAR2LIT (uip);
+      this += (this->val == TRUE);
       nonminimizedllits++;
+      minimizedllits++;
+      add_lit (this);
+#ifdef STATS
+      if (uip->reason)
+	uips++;
 #endif
+    }
+  else
+    assert (!level);
 
   /* 3. Try to mark more intermediate variables, with the goal to minimize
    * the conflict clause.  This is a DFS from already marked variables
@@ -3502,27 +3614,25 @@ DONE_FIRST_UIP:
    * incremental applications.  After switching to DFS this hot spot went
    * away.
    */
-  original = mhead;
-  for (m = marked; m < original; m++)
+  orig = mhead - marked;
+  for (i = 0; i < orig; i++)
     {
-      start = *m;
-      assert (start->mark);
+      start = marked[i];
 
-      if (start == uip)
-	continue;
+      assert (start->mark);
+      assert (start != uip);
+      assert (start->level < level);
 
       if (!start->reason)
 	continue;
 
-      old = mhead;
-
+      old = mhead - marked;
       assert (dhead == dfs);
-      assert (dhead < eod);
-      *dhead++ = start;
+      push (start);
 
       while (dhead > dfs)
 	{
-	  u = *--dhead;
+	  u = pop ();
 	  assert (u->mark);
 
 	  c = var2reason (u);
@@ -3530,11 +3640,11 @@ DONE_FIRST_UIP:
 	  if (c == &impl)
 	    resetimpl ();
 #endif
-	  if (!c ||
-	      VAR2LEVEL (u) < minlevel ||
-	      (hashlevel (VAR2LEVEL (u)) & ~siglevels))
+	  if (!c || 
+	      ((l = u->level) &&
+	       (l < minlevel || ((hashlevel (l) & ~siglevels)))))
 	    {
-	      while (mhead > old)	/* reset all marked */
+	      while (mhead > marked + old)	/* reset all marked */
 		(*--mhead)->mark = 0;
 
 	      dhead = dfs;		/* and DFS stack */
@@ -3545,38 +3655,14 @@ DONE_FIRST_UIP:
 	  for (p = c->lits; p < eol; p++)
 	    {
 	      v = LIT2VAR (*p);
-
-	      if (v->mark)		/* avoid overflow */
+	      if (v->mark)
 		continue;
 
-	      v->mark = 1;
-
-	      assert (mhead < eom);	/* no overflow */
-	      *mhead++ = v;
-
-	      assert (dhead < eod);	/* no overflow */
-	      *dhead++ = v;
+	      mark_var (v);
+	      push (v);
 	    }
 	}
     }
-
-#if 1
-  /* 3'. add score increment to variables of involved variables.
-   */
-#ifndef NFL
-  if (!simplifying)
-#endif
-    inc_marked ();
-#endif
-
-  /* 4. Add only non redundant marked variables as literals of new clause.
-   */
-  assert (ahead == added);
-  assert (rhead == resolved);
-
-  /* Conflict is first resolved clause
-   */
-  add_antecedent_and_inc_activity (conflict);
 
   for (m = marked; m < mhead; m++)
     {
@@ -3585,11 +3671,7 @@ DONE_FIRST_UIP:
       assert (v->mark);
       assert (!v->resolved);
 
-      if (!v->used)
-	{
-	  vused++;
-	  v->used = 1;
-	}
+      use_var (v);
 
       c = var2reason (v);
       if (!c)
@@ -3603,7 +3685,11 @@ DONE_FIRST_UIP:
       for (p = c->lits; p < eol; p++)
 	{
 	  other = *p;
+
 	  u = LIT2VAR (other);
+	  if (!u->level)
+	    continue;
+
 	  if (!u->mark)		/* 'MARKTEST' */
 	    break;
 	}
@@ -3611,7 +3697,7 @@ DONE_FIRST_UIP:
       if (p != eol)
 	continue;
 
-      add_antecedent_and_inc_activity (c);
+      add_antecedent (c);
       v->resolved = 1;
     }
 
@@ -3632,21 +3718,9 @@ DONE_FIRST_UIP:
       if (this->val == TRUE)
 	this++;			/* actually NOTLIT */
 
-      assert (ahead < eoa);
-      *ahead++ = this;
-#ifdef STATS
+      add_lit (this);
       minimizedllits++;
-#endif
     }
-
-#if 1
-  /* 5. add score increment to variables of learned clause.
-   */
-#ifndef NFL
-  if (!simplifying)
-#endif
-    inc_marked ();
-#endif
 
   assert (ahead <= eoa);
   assert (rhead <= eor);
@@ -3657,12 +3731,12 @@ DONE_FIRST_UIP:
 /* Propagate assignment of 'this' to 'FALSE' by visiting all binary clauses in
  * which 'this' occurs.
  */
-static void
+inline static void
 prop2 (Lit * this)
 {
 #ifdef NO_BINARY_CLAUSES
+  Lit ** l, ** start;
   Ltk * lstk;
-  Lit ** l;
 #else
   Cls * cls, ** p;
   Cls * next;
@@ -3670,25 +3744,20 @@ prop2 (Lit * this)
   Lit * other;
   Val tmp;
 
-  assert (!conflict);
   assert (this->val == FALSE);
 
 #ifdef NO_BINARY_CLAUSES
   lstk = LIT2IMPLS (this);
-  l = lstk->top;
-  while (l != lstk->start)
+  start = lstk->start;
+  l = start + lstk->count;
+  while (l != start)
     {
 #ifdef STATS
       /* The counter 'visits' is the number of clauses that are
        * visited during propagations of assignments.
        */
       visits++;
-
-      /* The counter 'traversals' is the number of literals traversed in
-       * each visited clause.  If we do not actually have binary clauses, it
-       * is kind of arbitrary, whether we increment this number or not.
-       */
-      traversals++;
+      bvisits++;
 #endif
       other = *--l;
       tmp = other->val;
@@ -3704,17 +3773,18 @@ prop2 (Lit * this)
 	  continue;
 	}
 
-      if (tmp == FALSE)
+      if (tmp != FALSE)
 	{
-	  assert (!conflict);
-	  conflict = setcimpl (this, other);
-	  break;
+	  assign_forced (other, LIT2REASON (NOTLIT(this)));
+	  continue;
 	}
 
-      assign_forced (other, LIT2REASON (NOTLIT(this)));
+      if (conflict == &cimpl)
+	resetcimpl ();
+      conflict = setcimpl (this, other);
     }
 #else
-  /* Traverse all binary clauses with 'this'.  Watches for binary
+  /* Traverse all binary clauses with 'this'.  Head/Tail pointers for binary
    * clauses do not have to be modified here.
    */
   p = LIT2IMPLS (this);
@@ -3722,7 +3792,7 @@ prop2 (Lit * this)
     {
 #ifdef STATS
       visits++;
-      traversals++;
+      bvisits++;
 #endif
       assert (!cls->collect);
 #ifdef TRACE
@@ -3736,7 +3806,6 @@ prop2 (Lit * this)
 	  next = cls->next[0];
 	  other = cls->lits[1];
 #ifdef STATS
-	  traversals++;
 #endif
 	}
       else
@@ -3756,20 +3825,16 @@ prop2 (Lit * this)
 	}
 
       if (tmp == FALSE)
-	{
-	  assert (!conflict);
-	  conflict = cls;
-	  break;
-	}
-
-      assign_forced (other, cls);	/* unit clause */
+	conflict = cls;
+      else
+	assign_forced (other, cls);	/* unit clause */
     }
 #endif /* !defined(NO_BINARY_CLAUSES) */
 }
 
 #ifndef NDSC
 static int
-should_disconnect_watched (Lit * lit)
+should_disconnect_head_tail (Lit * lit)
 {
   unsigned lit_level;
   Var * v;
@@ -3791,25 +3856,41 @@ should_disconnect_watched (Lit * lit)
 }
 #endif
 
-static void
+inline static void
 propl (Lit * this)
 {
-  Cls *next, **wch_ptr, **new_wch_ptr;
-  Lit **l, *other, *new_lit, **eol;
-  unsigned pos;
+  Lit **l, *other, *prev, *new_lit, **eol;
+  Cls *next, **htp_ptr, **new_htp_ptr;
   Cls *cls;
+#ifdef STATS
+  unsigned size;
+#endif
 
-  wch_ptr = LIT2WCHS (this);
+  htp_ptr = LIT2HTPS (this);
   assert (this->val == FALSE);
 
-  /* Traverse all non binary clauses with 'this'.  Watches are
+  /* Traverse all non binary clauses with 'this'.  Head/Tail pointers are
    * updated as well.
    */
-  for (cls = *wch_ptr; cls; cls = next)
+  for (cls = *htp_ptr; cls; cls = next)
     {
 #ifdef STATS
       visits++;
-      traversals++;
+      size = cls->size;
+      if (size == 2)
+	bvisits++;
+      else if (size >= 3)
+	{
+	  traversals++;	/* other is dereferenced at least */
+
+	  if (size == 3)
+	    tvisits++;
+	  else if (size >= 4)
+	    {
+	      lvisits++;
+	      ltraversals++;
+	    }
+	}
 #endif
 #ifdef TRACE
       assert (!cls->collected);
@@ -3826,21 +3907,24 @@ propl (Lit * this)
 	}
 
       other = cls->lits[0];
-      pos = (other != this);
-      if (!pos)
+      if (other != this)
+	{
+	  cls->lits[0] = this;
+	  cls->lits[1] = other;
+	  next = cls->next[1];
+	  cls->next[1] = cls->next[0];
+	  cls->next[0] = next;
+	}
+      else
 	{
 	  other = cls->lits[1];
-#ifdef STATS
-	  traversals++;
-#endif
+	  next = cls->next[0];
 	}
-
-      assert (other == cls->lits[!pos]);
-      assert (this == cls->lits[pos]);
-
-      next = cls->next[pos];
-
+      assert (other == cls->lits[1]);
+      assert (this == cls->lits[0]);
+      assert (next == cls->next[0]);
       assert (!cls->collect);
+
       if (other->val == TRUE)
 	{
 #ifdef STATS
@@ -3848,65 +3932,73 @@ propl (Lit * this)
 	  othertruel++;
 #endif
 #ifndef NDSC
-	  if (should_disconnect_watched (other))
+	  if (should_disconnect_head_tail (other))
 	    {
-	      new_wch_ptr = LIT2DWCHS (other);
-	      cls->next[pos] = *new_wch_ptr;
-	      *new_wch_ptr = cls;
+	      new_htp_ptr = LIT2DHTPS (other);
+	      cls->next[0] = *new_htp_ptr;
+	      *new_htp_ptr = cls;
 #ifdef STATS
 	      othertruelu++;
 #endif
-	      *wch_ptr = next;
+	      *htp_ptr = next;
 	      continue;
 	    }
 #endif
-	KEEP_WATCH_AND_CONTINUE:
-	  wch_ptr = cls->next + pos;
+	  htp_ptr = cls->next;
 	  continue;
 	}
 
       l = cls->lits + 1;
       eol = cls->lits + cls->size;
+      prev = this;
 
-      /* Try to find new watched literal instead of 'this'.  We use
-       * 'goto' style programming here in order to be able to break
-       * out of the outer loop from within the following loop, e.g.
-       * with the following 'break' statement.
-       */
-    FIND_NEW_WATCHED_LITERAL:
-
-      if (++l == eol)
+      while (++l != eol)
 	{
+#ifdef STATS
+	  if (size >= 3)
+	    {
+	      traversals++;
+	      if (size > 3)
+		ltraversals++;
+	    }
+#endif
+	  new_lit = *l;
+	  *l = prev;
+	  prev = new_lit;
+	  if (new_lit->val != FALSE) break;
+	}
+
+      if (l == eol)
+	{
+	  while (l > cls->lits + 2)
+	    {
+	      new_lit = *--l;
+	      *l = prev;
+	      prev = new_lit;
+	    }
+	  assert (cls->lits[0] == this);
+
+	  assert (other == cls->lits[1]);
 	  if (other->val == FALSE)	/* found conflict */
 	    {
 	      assert (!conflict);
 	      conflict = cls;
-	      break;			/* leave 'for' loop */
+	      return;
 	    }
 
 	  assign_forced (other, cls);		/* unit clause */
-	  goto KEEP_WATCH_AND_CONTINUE;
+	  htp_ptr = cls->next;
 	}
-
-#ifdef STATS
-      traversals++;
-#endif
-      new_lit = *l;
-      if (new_lit->val == FALSE)
-	goto FIND_NEW_WATCHED_LITERAL;
-
-      assert (new_lit->val == TRUE || new_lit->val == UNDEF);
-
-      /* Swap new watched literal with previously watched 'this'.
-       */
-      cls->lits[pos] = new_lit;
-      *l = this;
-
-      new_wch_ptr = LIT2WCHS (new_lit);
-      cls->next[pos] = *new_wch_ptr;
-      *new_wch_ptr = cls;
-
-      *wch_ptr = next;
+      else
+	{
+	  assert (new_lit->val == TRUE || new_lit->val == UNDEF);
+	  cls->lits[0] = new_lit;
+	  // *l = this;
+	  new_htp_ptr = LIT2HTPS (new_lit);
+	  cls->next[0] = *new_htp_ptr;
+	  *new_htp_ptr = cls;
+	  *htp_ptr = next;
+	}
     }
 }
 
@@ -4007,7 +4099,8 @@ enlarge_adotab (void)
 {
   /* TODO make this generic */
 
-  ABORTIF (szadotab, "all different objects table needs larger initial size");
+  ABORTIF (szadotab,
+           "internal: all different objects table needs larger initial size");
   assert (!nadotab);
   szadotab = 10000;
   NEWN (adotab, szadotab);
@@ -4029,7 +4122,7 @@ propado (Var * v)
   assert (!v->adotabpos);
 
   if (!v->ado)
-    return;
+    return 1;
 
   assert (v->inado);
 
@@ -4041,7 +4134,7 @@ propado (Var * v)
 	u->ado = v->ado;
 	v->ado = 0;
 
-	return;
+	return 1;
       }
 
   if (4 * nadotab >= 3 * szadotab)	/* at least 75% filled */
@@ -4055,7 +4148,7 @@ propado (Var * v)
       nadotab++;
       v->adotabpos = adotabpos;
       *adotabpos = v->ado;
-      return;
+      return 1;
     }
 
   assert (ado != v->ado);
@@ -4072,6 +4165,7 @@ propado (Var * v)
   assert (q == ENDOFCLS (adoconflict));
   conflict = adoconflict;
   adoconflicts++;
+  return 0;
 }
 
 #endif
@@ -4079,27 +4173,38 @@ propado (Var * v)
 static void
 bcp (void)
 {
+  int props = 0;
   assert (!conflict);
 
-  if (mtcls)
+  if (mtcls || conflict)
     return;
 
-  while (!conflict)
+  for (;;)
     {
       if (ttail2 < thead)	/* prioritize implications */
 	{
-	  propagations++;
+	  props++;
 	  prop2 (NOTLIT (*ttail2++));
 	}
       else if (ttail < thead)	/* unit clauses or clauses with length > 2 */
-	propl (NOTLIT (*ttail++));
+	{
+	  if (conflict) break;
+	  propl (NOTLIT (*ttail++));
+	  if (conflict) break;
+	}
 #ifndef NADC
       else if (ttailado < thead)
-	propado (LIT2VAR (*ttailado++));
+	{
+	  if (conflict) break;
+	  propado (LIT2VAR (*ttailado++));
+	  if (conflict) break;
+	}
 #endif
       else
 	break;		/* all assignments propagated, so break */
     }
+
+  propagations += props;
 }
 
 /* This version of 'drive' is independent of the global variable 'level' and
@@ -4115,7 +4220,7 @@ drive (void)
   for (p = added; p < ahead; p++)
     {
       v = LIT2VAR (*p);
-      if (!first || VAR2LEVEL (v) > VAR2LEVEL (first))
+      if (!first || v->level > first->level)
 	first = v;
     }
 
@@ -4127,17 +4232,17 @@ drive (void)
     {
       v = LIT2VAR (*p);
 
-      if (VAR2LEVEL (v) == VAR2LEVEL (first))
+      if (v->level == first->level)
 	continue;
 
-      if (!second || VAR2LEVEL (v) > VAR2LEVEL (second))
+      if (!second || v->level > second->level)
 	second = v;
     }
 
   if (!second)
     return 0;
 
-  return VAR2LEVEL (second);
+  return second->level;
 }
 
 #ifdef VISCORES
@@ -4185,8 +4290,8 @@ viscores (void)
   fprintf (fviscores, "plot [0:%u] 0, 100 * (1 - 1/1.1), 100", max_var);
 
   for (i = 0; i < 8; i++)
-    fprintf (fviscores,
-             ", \"%s.%d\" using 1:2:3 with labels tc lt %d",
+    fprintf (fviscores, 
+             ", \"%s.%d\" using 1:2:3 with labels tc lt %d", 
 	     name, i, i + 1);
 
   fputc ('\n', fviscores);
@@ -4247,18 +4352,22 @@ inc_max_var (void)
   Rnk *r;
   Var *v;
 
+  assert (max_var < size_vars);
+
   max_var++;			/* new index of variable */
   assert (max_var);		/* no unsigned overflow */
 
   if (max_var == size_vars)
     enlarge (size_vars + (size_vars + 3) / 4);	/* increase by 25% */
 
+  assert (max_var < size_vars);
+
   lit = lits + 2 * max_var;
   lit[0].val = lit[1].val = UNDEF;
 
-  memset (wchs + 2 * max_var, 0, 2 * sizeof *wchs);
+  memset (htps + 2 * max_var, 0, 2 * sizeof *htps);
 #ifndef NDSC
-  memset (dwchs + 2 * max_var, 0, 2 * sizeof *dwchs);
+  memset (dhtps + 2 * max_var, 0, 2 * sizeof *dhtps);
 #endif
   memset (impls + 2 * max_var, 0, 2 * sizeof *impls);
   memset (jwh + 2 * max_var, 0, 2 * sizeof *jwh);
@@ -4270,9 +4379,6 @@ inc_max_var (void)
   CLR (r);
 
   hpush (r);
-
-  // inc_score (v);
-  // inc_vinc ();
 }
 
 static void
@@ -4314,6 +4420,17 @@ force (Cls * cls)
 }
 
 static void
+inc_lreduce (void)
+{
+#ifdef STATS
+  inclreduces++;
+#endif
+  lreduce *= FREDUCE;
+  lreduce /= 100;
+  report (1, '+');
+}
+
+static void
 backtrack (void)
 {
   unsigned new_level;
@@ -4324,9 +4441,22 @@ backtrack (void)
 
   analyze ();
   new_level = drive ();
+  // TODO: why not? assert (new_level != 1  || (ahead - added) == 2);
   cls = add_simplified_clause (1);
   undo (new_level);
   force (cls);
+
+  if (
+#ifndef NFL
+    !simplifying &&
+#endif
+    !--lreduceadjustcnt)
+    {
+      lreduceadjustinc *= 15;
+      lreduceadjustinc /= 10;
+      lreduceadjustcnt = lreduceadjustinc;
+      inc_lreduce ();
+    }
 
   if (verbosity >= 4 && !(conflicts % 1000))
     report (4, 'C');
@@ -4375,7 +4505,9 @@ disconnect_clause (Cls * cls)
 	}
     }
 
+#ifndef NDEBUG
   cls->connected = 0;
+#endif
 }
 
 static int
@@ -4390,7 +4522,7 @@ clause_is_toplevel_satisfied (Cls * cls)
       if (lit->val == TRUE)
 	{
 	  v = LIT2VAR (lit);
-	  if (!VAR2LEVEL (v))
+	  if (!v->level)
 	    return 1;
 	}
     }
@@ -4408,11 +4540,6 @@ collect_clause (Cls * cls)
   assert (!cls->collected);
   cls->collected = 1;
 #endif
-  if (cls->fixed)
-    {
-      assert (lfixed);
-      lfixed--;
-    }
   disconnect_clause (cls);
 
 #ifdef TRACE
@@ -4446,21 +4573,21 @@ collect_clauses (void)
 	      Ltk * lstk = LIT2IMPLS (lit);
 	      Lit ** r, ** s;
 	      r = lstk->start;
-	      for (s = r; s < lstk->top; s++)
+	      for (s = r; s < lstk->start + lstk->count; s++)
 		{
 		  Lit * other = *s;
 		  Var *v = LIT2VAR (other);
-		  if (VAR2LEVEL (v) || other->val != TRUE)
+		  if (v->level || other->val != TRUE)
 		    *r++ = other;
 		}
-	      lstk->top = r;
+	      lstk->count = r - lstk->start;
 	      continue;
 #else
 	      p = LIT2IMPLS (lit);
 #endif
 	    }
 	  else
-	    p = LIT2WCHS (lit);
+	    p = LIT2HTPS (lit);
 
 	  for (cls = *p; cls; cls = next)
 	    {
@@ -4480,7 +4607,7 @@ collect_clauses (void)
 #ifndef NDSC
   for (lit = lits + 2; lit <= eol; lit++)
     {
-      p = LIT2DWCHS (lit);
+      p = LIT2DHTPS (lit);
       while ((cls = *p))
 	{
 	  Lit * other = cls->lits[0];
@@ -4557,29 +4684,10 @@ collect_clauses (void)
 static int
 need_to_reduce (void)
 {
-  if (lastreduceconflicts + dfreduce <= conflicts)
-    {
-      dfreduce *= FREDUCE;
-      dfreduce /= 100;
-#ifdef STATS
-      freductions++;
-#endif
-      return 1;
-    }
-
   return nlclauses >= reduce_limit_on_lclauses ();
 }
 
-static void
-inc_lreduce (void)
-{
-#ifdef STATS
-  inclreduces++;
-#endif
-  lreduce *= FREDUCE;
-  lreduce /= 100;
-  report (2, '\'');
-}
+#ifdef NLUBY
 
 static void
 inc_drestart (void)
@@ -4601,12 +4709,72 @@ inc_ddrestart (void)
     ddrestart = MAXRESTART;
 }
 
+#else
+
+static int
+luby (int i)
+{
+  int k;
+  for (k = 1; k < 32; k++)
+    if (i == (1 << k) - 1)
+      return 1 << (k - 1);
+
+  for (k = 1;; k++)
+    if ((1 << (k - 1)) <= i && i < (1 << k) - 1)
+      return luby (i - (1 << (k-1)) + 1);
+}
+
+#endif
+
+#ifndef NLUBY
+static void
+inc_lrestart (int skip)
+{
+  unsigned delta;
+
+  delta = 100 * luby (++lubycnt);
+  lrestart = conflicts + delta;
+
+  if (waslubymaxdelta)
+    report (1, skip ? 'N' : 'R');
+  else
+    report (2, skip ? 'n' : 'r');
+
+  if (delta > lubymaxdelta)
+    {
+      lubymaxdelta = delta;
+      waslubymaxdelta = 1;
+    }
+  else
+    waslubymaxdelta = 0;
+}
+#endif
+
+static void
+init_restart (void)
+{
+#ifdef NLUBY
+  /* TODO: why is it better in incremental usage to have smaller initial
+   * outer restart interval?
+   */
+  ddrestart = calls > 1 ? MINRESTART : 1000;
+  drestart = MINRESTART;
+  lrestart = conflicts + drestart;
+#else
+  lubycnt = 0;
+  lubymaxdelta = 0;
+  waslubymaxdelta = 0;
+  inc_lrestart (0);
+#endif
+}
+
 static void
 restart (void)
 {
-  int skip, outer;
-  Cls ** p, * c;
+  int skip;
+#ifdef NLUBY
   char kind;
+  int outer;
 
   inc_drestart ();
   outer = (drestart >= ddrestart);
@@ -4615,13 +4783,15 @@ restart (void)
     skip = very_high_agility ();
   else
     skip = high_agility ();
+#else
+  skip = medium_agility ();
+#endif
 
 #ifdef STATS
   if (skip)
     skippedrestarts++;
 #endif
 
-  c = 0;
   assert (conflicts >= lrestart);
 
   if (!skip)
@@ -4629,35 +4799,15 @@ restart (void)
       restarts++;
       assert (level > 1);
       LOG (fprintf (out, "%srestart %u\n", prefix, restarts));
-
-      for (p = lhead;
-	   p > lclauses &&
-	     ((unsigned long)(lhead - p)) < drestart &&	/* bound search */
-	     (c = p[-1]) &&
-	     c->size <= 2;			/* large clauses only */
-	   p--)
-	;
-
-      if (c && (c->size <= 2 || c->fixed))
-	c = 0;
-
       undo (0);
     }
 
+#ifdef NLUBY
   if (outer)
     {
       kind = skip ? 'N' : 'R';
-
-      if (c && !skip)
-	{
-	  assert (!c->fixed);
-	  c->fixed = 1;			/* keep forever */
-	  lfixed++;			/* increases reduce limit */
-	}
-
       inc_ddrestart ();
       drestart = MINRESTART;
-      inc_lreduce ();
     }
   else  if (skip)
     {
@@ -4666,15 +4816,6 @@ restart (void)
   else
     {
       kind = 'r';
-
-      if (c)
-	{
-	  assert (!skip);
-	  assert (c->learned);
-	  assert (!c->fixed);
-
-	  inc_activity (c, lcinc);		/* make this very active */
-	}
     }
 
   assert (drestart <= MAXRESTART);
@@ -4682,6 +4823,9 @@ restart (void)
   assert (lrestart > conflicts);
 
   report (outer ? 1 : 2, kind);
+#else
+  inc_lrestart (skip);
+#endif
 }
 
 inline static void
@@ -4706,7 +4850,7 @@ lit_has_binary_clauses (Lit * lit)
 {
 #ifdef NO_BINARY_CLAUSES
   Ltk* lstk = LIT2IMPLS (lit);
-  return lstk->top != lstk->start;
+  return lstk->count != 0;
 #else
   return *LIT2IMPLS (lit) != 0;
 #endif
@@ -4738,7 +4882,7 @@ rnk2jwh (Rnk * r)
 
   plit = RNK2LIT (r);
   nlit = plit + 1;
-
+  
   pjwh = *LIT2JWH (plit);
   njwh = *LIT2JWH (nlit);
 
@@ -4767,10 +4911,11 @@ cmp_inverse_jwh_rnk (Rnk * r, Rnk * s)
 static void
 faillits (void)
 {
-  unsigned i, j, old_trail_count, new_trail_count, common, saved_count;
+  unsigned i, j, old_trail_count, common, saved_count;
   unsigned new_saved_size, oldladded = ladded;
   unsigned long long limit, delta;
   Lit * lit, * other, * pivot;
+  int new_trail_count;
   Rnk * r, ** p, ** q;
   Var * v;
 
@@ -4925,13 +5070,13 @@ CONTRADICTION:
       undo (0);
 
       LOG (if (common)
-	    fprintf (out,
+	    fprintf (out, 
 		      "%sfound %d literals implied by %d and %d\n",
-		      prefix, common,
+		      prefix, common, 
 		      lit2int (NOTLIT (lit)), lit2int (lit)));
 
-      for (j = 0;
-	   j < common
+      for (j = 0; 
+	   j < common 
 	  /* TODO: For some Velev benchmarks, extracting the common implicit
 	   * failed literals took quite some time.  This needs to be fixed by
 	   * a dedicated analyzer.  Up to then we bound the number of
@@ -4947,7 +5092,7 @@ CONTRADICTION:
 
 	  assert (!other->val);
 
-	  LOG (fprintf (out,
+	  LOG (fprintf (out, 
 			"%sforcing %d as forced implicitly failed literal\n",
 			prefix, lit2int (other)));
 
@@ -5041,7 +5186,7 @@ RETURN:
 	*q++ = r;
     }
 
-  /* Then resort with respect to EVSIDS socre and fix positions.
+  /* Then resort with respect to EVSIDS score and fix positions.
    */
   sort (Rnk *, cmp_inverse_rnk, heap + 1, hhead - (heap + 1));
   for (p = heap + 1; p < hhead; p++)
@@ -5053,8 +5198,8 @@ RETURN:
 static void
 simplify (void)
 {
+  unsigned collect, delta;
   size_t bytes_collected;
-  unsigned collect;
   Cls **p, *cls;
 
   assert (!mtcls);
@@ -5105,7 +5250,10 @@ simplify (void)
 #endif
     }
 
-  lsimplify = propagations + 10 * (olits + llits) + 100000;
+  delta = 10 * (olits + llits) + 100000;
+  if (delta > 2000000)
+    delta = 2000000;
+  lsimplify = propagations + delta;
   fsimplify = fixed;
   simps++;
 
@@ -5121,8 +5269,12 @@ iteration (void)
 
   iterations++;
   report (2, 'i');
+#ifdef NLUBY
   drestart = MINRESTART;
   lrestart = conflicts + drestart;
+#else
+  init_restart ();
+#endif
   isimplify = fixed;
 }
 
@@ -5265,8 +5417,7 @@ reduce (void)
 #ifdef STATS
       rrecycled += bytes_collected;
 #endif
-      if (verbosity)
-	report (2, '-');
+      report (2, '-');
     }
 
   if (!lcollect)
@@ -5276,34 +5427,22 @@ reduce (void)
 }
 
 static void
-init_restart (void)
-{
-  /* TODO: why is it better in incremental usage to have smaller initial
-   * outer restart interval?
-   */
-  ddrestart = calls ? MINRESTART : 1000;
-  drestart = MINRESTART;
-  lrestart = conflicts + drestart;
-}
-
-static void
 init_reduce (void)
 {
-  lreduce = noclauses / 4;
+  lreduce = loadded / 2;
 
   if (lreduce < 100)
     lreduce = 100;
 
+#if 0
+  if (lreduce > 10000)
+    lreduce = 10000;
+#endif
+
   if (verbosity)
-    fprintf (out,
+    fprintf (out, 
              "%s\n%sinitial reduction limit %u clauses\n%s\n",
 	     prefix, prefix, lreduce, prefix);
-}
-
-static void
-init_forced_reduce (void)
-{
-  dfreduce = IFREDUCE;
 }
 
 static unsigned
@@ -5359,7 +5498,7 @@ decide_phase (Lit * lit)
 	{
 	  /* assign to FALSE (Jeroslow-Wang says there are more short
 	   * clauses with negative occurence of this variable, so satisfy
-	   * those, to minimize BCP)
+	   * those, to minimize BCP) 
 	   */
 	  lit = not_lit;
 	}
@@ -5368,7 +5507,7 @@ decide_phase (Lit * lit)
 	  /* assign to TRUE (... but strictly more positive occurrences) */
 	}
     }
-  else
+  else 
     {
       /* repeat last phase: phase saving heuristic */
 
@@ -5455,20 +5594,22 @@ rdecide (void)
 static Lit *
 sdecide (void)
 {
+  Rnk *r, * tmp;
   Lit *res;
-  Rnk *r;
 
-  do
+  for (;;)
     {
-      r = hpop ();
-      NOLOG (fprintf (out,
+      r = htop ();
+      res = RNK2LIT (r);
+      if (res->val == UNDEF) break;
+      tmp = hpop ();
+      assert (tmp == r);
+      NOLOG (fprintf (out, 
                       "%shpop %u %u %u\n",
 		      prefix, r - rnks,
 		      FLTMANTISSA(r->score),
 		      FLTEXPONENT(r->score)));
-      res = RNK2LIT (r);
     }
-  while (res->val != UNDEF);
 
 #ifdef STATS
   sdecisions++;
@@ -5480,7 +5621,6 @@ sdecide (void)
   return res;
 }
 
-#ifndef NASS
 static Lit *
 adecide (void)
 {
@@ -5499,11 +5639,7 @@ adecide (void)
 	  failed_assumption = lit;
 	  v = LIT2VAR (lit);
 
-	  if (!v->used)
-	    {
-	      vused++;
-	      v->used = 1;
-	    }
+	  use_var (v);
 
 	  LOG (fprintf (out, "%sfailed assumption %d\n",
 			prefix, lit2int (failed_assumption)));
@@ -5524,7 +5660,6 @@ adecide (void)
 
   return 0;
 }
-#endif
 
 static void
 decide (void)
@@ -5534,16 +5669,13 @@ decide (void)
   assert (!satisfied ());
   assert (!conflict);
 
-#ifndef NASS
   if (alstail < alshead && (lit = adecide ()))
     ;
   else if (failed_assumption)
     return;
   else if (satisfied ())
     return;
-  else
-#endif
-  if (!(lit = rdecide ()))
+  else if (!(lit = rdecide ()))
     lit = sdecide ();
 
   assert (lit);
@@ -5580,7 +5712,6 @@ sat (int l)
     goto SATISFIED;
 
   init_restart ();
-  init_forced_reduce ();
 
   isimplify = fixed;
   backtracked = 0;
@@ -5608,9 +5739,7 @@ sat (int l)
 SATISFIED:
 #ifndef NDEBUG
 	  original_clauses_satisfied ();
-#ifndef NASS
 	  assumptions_satisfied ();
-#endif
 #endif
 	  return PICOSAT_SATISFIABLE;
 	}
@@ -5659,10 +5788,8 @@ SATISFIED:
 	restart ();
 
       decide ();
-#ifndef NASS
       if (failed_assumption)
 	return PICOSAT_UNSATISFIABLE;
-#endif
       count++;
     }
 }
@@ -5682,11 +5809,7 @@ core (void)
 
   assert (trace);
 
-#ifdef NASS
-  assert (mtcls);
-#else
   assert (mtcls || failed_assumption);
-#endif
   if (ocore >= 0)
     return ocore;
 
@@ -5695,14 +5818,11 @@ core (void)
   stack = shead = eos = 0;
   ENLARGE (stack, shead, eos);
 
-#ifndef NASS
   if (mtcls)
-#endif
     {
       idx = CLS2IDX (mtcls);
       *shead++ = idx;
     }
-#ifndef NASS
   else
     {
       assert (failed_assumption);
@@ -5713,7 +5833,6 @@ core (void)
 	  *shead++ = idx;
 	}
     }
-#endif
 
   while (shead > stack)
     {
@@ -6011,9 +6130,9 @@ write_core_wrapper (FILE * file, int fmt)
 static Lit *
 import_lit (int lit)
 {
-  ABORTIF (lit == INT_MIN, "INT_MIN literal");
+  ABORTIF (lit == INT_MIN, "API usage: INT_MIN literal");
 
-  while (abs (lit) > max_var)
+  while (abs (lit) > (int) max_var)
     inc_max_var ();
 
   return int2lit (lit);
@@ -6025,7 +6144,7 @@ reset_core (void)
 {
   Cls ** p, * c;
   Zhn ** q, * z;
-  int i;
+  unsigned i;
 
   for (i = 1; i <= max_var; i++)
     vars[i].core = 0;
@@ -6043,24 +6162,62 @@ reset_core (void)
 #endif
 
 static void
+reset_assumptions (void)
+{
+  Lit ** p;
+
+  failed_assumption = 0;
+  alstail = alshead = als;
+  adecidelevel = 0;
+
+  if (extracted_all_failed_assumptions)
+    {
+      for (p = als; p < alshead; p++)
+	LIT2VAR (*p)->failed = 0;
+
+      extracted_all_failed_assumptions = 0;
+    }
+}
+
+static void
+check_ready (void)
+{
+  ABORTIF (state == RESET, "API usage: uninitialized");
+}
+
+static void
+check_sat_state (void)
+{
+  ABORTIF (state != SAT, "API usage: expected to be in SAT state");
+}
+
+static void
+check_unsat_state (void)
+{
+  ABORTIF (state != UNSAT, "API usage: expected to be in UNSAT state");
+}
+
+static void
+check_sat_or_unsat_or_unknown_state (void)
+{
+  ABORTIF (state != SAT && state != UNSAT && state != UNKNOWN,
+           "API usage: expected to be in SAT, UNSAT, or UNKNOWN state");
+}
+
+static void
 reset_incremental_usage (void)
 {
   unsigned num_non_false;
   Lit * lit, ** q;
 
-  if (!assignments_and_failed_assumption_valid)
-    return;
+  check_sat_or_unsat_or_unknown_state ();
 
   LOG (fprintf (out, "%sRESET incremental usage\n", prefix));
 
   if (level)
     undo (0);
 
-#ifndef NASS
-  alstail = alshead = als;
-  failed_assumption = 0;
-  adecidelevel = 0;
-#endif
+  reset_assumptions ();
 
   if (conflict)
     { 
@@ -6088,11 +6245,11 @@ reset_incremental_usage (void)
   reset_core ();
 #endif
 
-  assignments_and_failed_assumption_valid = 0;
-
   saved_flips = flips;
   min_flipped = UINT_MAX;
   saved_max_var = max_var;
+
+  state = READY;
 }
 
 static void
@@ -6101,7 +6258,7 @@ enter (void)
   if (nentered++)
     return;
 
-  ABORTIF (state == INVALID_STATE, "uninitialized");
+  check_ready ();
   entered = picosat_time_stamp ();
 }
 
@@ -6118,20 +6275,10 @@ leave (void)
 static void
 check_trace_support_and_execute (FILE * file, void (*f)(FILE*,int), int fmt)
 {
-#ifndef NASS
-  if (!mtcls && !failed_assumption)
-    return;
-#else
-  if (!mtcls)
-    return;
-#endif
+  check_ready ();
+  check_unsat_state ();
 #ifdef TRACE
-  ABORTIF (!trace, "tracing disabled");
-#if 0
-#ifndef NASS
-  ABORTIF (!mtcls && failed_assumption, "not implemented");
-#endif
-#endif
+  ABORTIF (!trace, "API usage: tracing disabled");
   enter ();
   f (file, fmt);
   leave ();
@@ -6143,10 +6290,55 @@ check_trace_support_and_execute (FILE * file, void (*f)(FILE*,int), int fmt)
 #endif
 }
 
+static void
+extract_all_failed_assumptions (void)
+{
+  Lit ** p, ** eol;
+  Var * v, * u;
+  int pos;
+  Cls * c;
+
+  assert (failed_assumption);
+  assert (mhead == marked);
+
+  if (marked == eom)
+    ENLARGE (marked, mhead, eom);
+
+  v = LIT2VAR (failed_assumption);
+  mark_var (v);
+  pos = 0;
+
+  while (pos < mhead - marked)
+    {
+      v = marked[pos++];
+      assert (v->mark);
+      c = var2reason (v);
+      if (!c)
+	continue;
+      eol = end_of_lits (c);
+      for (p = c->lits; p < eol; p++)
+	{
+	  u = LIT2VAR (*p);
+	  if (!u->mark)
+	    mark_var (u);
+	}
+    }
+
+  for (p = als; p < alshead; p++)
+    {
+      u = LIT2VAR (*p);
+      if (u->mark)
+	u->failed = 1;
+    }
+
+  while (mhead > marked)
+    (*--mhead)->mark = 0;
+}
+
 const char *
 picosat_copyright (void)
 {
-  return "Copyright (c) 2006 - 2008 Armin Biere JKU Linz";
+  return "Copyright (c) 2006 - 2009 Armin Biere JKU Linz";
 }
 
 void
@@ -6164,6 +6356,7 @@ picosat_adjust (int new_max_var)
 
   new_max_var = abs (new_max_var);
   new_size_vars = new_max_var + 1;
+
   if (size_vars < new_size_vars)
     enlarge (new_size_vars);
 
@@ -6178,6 +6371,8 @@ picosat_inc_max_var (void)
 {
   if (measurealltimeinlib)
     enter ();
+  else
+    check_ready ();
 
   inc_max_var ();
 
@@ -6190,14 +6385,17 @@ picosat_inc_max_var (void)
 void
 picosat_set_verbosity (int new_verbosity_level)
 {
+  check_ready ();
   verbosity = new_verbosity_level;
 }
 
 void
 picosat_enable_trace_generation (void)
 {
+  check_ready ();
 #ifdef TRACE
-  ABORTIF (addedclauses, "trace generation enabled after adding clauses");
+  ABORTIF (addedclauses,
+           "API usage: trace generation enabled after adding clauses");
   trace = 1;
 #endif
 }
@@ -6205,6 +6403,7 @@ picosat_enable_trace_generation (void)
 void
 picosat_set_incremental_rup_file (FILE * rup_file, int m, int n)
 {
+  check_ready ();
   assert (!rupstarted);
   rup = rup_file;
   rupvariables = m;
@@ -6214,30 +6413,35 @@ picosat_set_incremental_rup_file (FILE * rup_file, int m, int n)
 void
 picosat_set_output (FILE * output_file)
 {
+  check_ready ();
   out = output_file;
 }
 
 void
 picosat_measure_all_calls (void)
 {
+  check_ready ();
   measurealltimeinlib = 1;
 }
 
 void
 picosat_set_prefix (const char * str)
 {
+  check_ready ();
   new_prefix (str);
 }
 
 void
 picosat_set_seed (unsigned s)
 {
+  check_ready ();
   srng = s;
 }
 
 void
 picosat_reset (void)
 {
+  check_ready ();
   reset ();
 }
 
@@ -6246,16 +6450,19 @@ picosat_add (int int_lit)
 {
   Lit *lit;
 
-  ABORTIF (rup && rupstarted && oadded >= (unsigned)rupclauses,
-           "adding too many clauses after RUP header written");
-#ifndef NADC
-  ABORTIF (addingtoado, "'picosat_add' and 'picosat_add_ado_lit' mixed");
-#endif
-
   if (measurealltimeinlib)
     enter ();
+  else
+    check_ready ();
 
-  reset_incremental_usage ();
+  ABORTIF (rup && rupstarted && oadded >= (unsigned)rupclauses,
+           "API usage: adding too many clauses after RUP header written");
+#ifndef NADC
+  ABORTIF (addingtoado,
+           "API usage: 'picosat_add' and 'picosat_add_ado_lit' mixed");
+#endif
+  if (state != READY)
+    reset_incremental_usage ();
 
   lit = import_lit (int_lit);
 
@@ -6274,10 +6481,16 @@ picosat_add_ado_lit (int external_lit)
 #ifndef NADC
   Lit * internal_lit;
 
-  ABORTIF (!addingtoado && ahead > added,
-           "'picosat_add' and 'picosat_add_ado_lit' mixed");
   if (measurealltimeinlib)
     enter ();
+  else
+    check_ready ();
+
+  if (state != READY)
+    reset_incremental_usage ();
+
+  ABORTIF (!addingtoado && ahead > added,
+           "API usage: 'picosat_add' and 'picosat_add_ado_lit' mixed");
 
   if (external_lit)
     {
@@ -6301,18 +6514,15 @@ picosat_add_ado_lit (int external_lit)
 void
 picosat_assume (int int_lit)
 {
-#ifdef NASS
-  ABORT ("no support for 'picosat_assume' (NASS defined at compile time)");
-#else
   Lit *lit;
-#if 0
-#ifdef TRACE
-  ABORTIF (trace, "incremental proof generation not working yet");
-#endif
-#endif
+
   if (measurealltimeinlib)
     enter ();
-  reset_incremental_usage ();
+  else
+    check_ready ();
+
+  if (state != READY)
+    reset_incremental_usage ();
 
   lit = import_lit (int_lit);
   if (alshead == eoals)
@@ -6326,7 +6536,6 @@ picosat_assume (int int_lit)
 
   if (measurealltimeinlib)
     leave ();
-#endif
 }
 
 int
@@ -6335,6 +6544,8 @@ picosat_sat (int l)
   int res;
   char ch;
 
+  enter ();
+
   calls++;
   LOG (fprintf (out, "%sSTART call %u\n", prefix, calls));
 
@@ -6342,37 +6553,40 @@ picosat_sat (int l)
     {
 #ifndef NADC
       if (addingtoado)
-	ABORT ("added all different constraint not complete");
+	ABORT ("API usage: incomplete all different constraint");
       else
 #endif
-	ABORT ("added clause not complete");
+	ABORT ("API usage: incomplete clause");
     }
 
-  enter ();
-  reset_incremental_usage ();
+  if (state != READY)
+    reset_incremental_usage ();
 
   res = sat (l);
 
+  assert (state == READY);
+
+  switch (res)
+    {
+    case PICOSAT_UNSATISFIABLE:
+      ch = '0';
+      state = UNSAT;
+      break;
+    case PICOSAT_SATISFIABLE:
+      ch = '1';
+      state = SAT;
+      break;
+    default:
+      ch = '?';
+      state = UNKNOWN;
+      break;
+    }
+
   if (verbosity)
     {
-      switch (res)
-	{
-	case PICOSAT_UNSATISFIABLE:
-	  ch = '0';
-	  break;
-	case PICOSAT_SATISFIABLE:
-	  ch = '1';
-	  break;
-	default:
-	  ch = '?';
-	  break;
-	}
-
       report (1, ch);
       rheader ();
     }
-
-  assignments_and_failed_assumption_valid = 1;
 
   leave ();
   LOG (fprintf (out, "%sEND call %u\n", prefix, calls));
@@ -6385,14 +6599,16 @@ picosat_deref (int int_lit)
 {
   Lit *lit;
 
-  ABORTIF (!int_lit, "zero literal");
-  ABORTIF (!assignments_and_failed_assumption_valid, "assignment invalid");
+  check_ready ();
+  check_sat_state ();
+  ABORTIF (!int_lit, "API usage: can not deref zero literal");
+  ABORTIF (mtcls, "API usage: deref after empty clause generated");
 
 #ifdef STATS
   derefs++;
 #endif
 
-  if (abs (int_lit) > max_var)
+  if (abs (int_lit) > (int) max_var)
     return 0;
 
   lit = int2lit (int_lit);
@@ -6412,18 +6628,20 @@ picosat_deref_toplevel (int int_lit)
   Lit *lit;
   Var * v;
 
-  ABORTIF (!int_lit, "zero literal");
+  check_ready ();
+  ABORTIF (!int_lit, "API usage: can not deref zero literal");
+  ABORTIF (mtcls, "API usage: deref after empty clause generated");
 
 #ifdef STATS
   derefs++;
 #endif
-  if (abs (int_lit) > max_var)
+  if (abs (int_lit) > (int) max_var)
     return 0;
 
   lit = int2lit (int_lit);
 
   v = LIT2VAR (lit);
-  if (VAR2LEVEL (v) > 0)
+  if (v->level > 0)
     return 0;
 
   if (lit->val == TRUE)
@@ -6438,6 +6656,7 @@ picosat_deref_toplevel (int int_lit)
 int
 picosat_inconsistent (void)
 {
+  check_ready ();
   return mtcls != 0;
 }
 
@@ -6446,43 +6665,62 @@ picosat_corelit (int int_lit)
 {
   int res;
 
-  ABORTIF (!int_lit, "zero literal");
+  check_ready ();
+  check_unsat_state ();
+  ABORTIF (!int_lit, "API usage: zero literal can not be in core");
+
+  assert (mtcls || failed_assumption);
 
   res = 0;
-  if (mtcls
-#ifndef NASS
-      || failed_assumption
-#endif
-      )
-    {
+
 #ifdef TRACE
-      {
-	ABORTIF (!trace, "tracing disabled");
-	if (measurealltimeinlib)
-	  enter ();
-	core ();
-	if (abs (int_lit) <= max_var)
-	  res = vars[abs (int_lit)].core;
-	assert (!res || vars[abs (int_lit)].used);
-	if (measurealltimeinlib)
-	  leave ();
-      }
+  {
+    ABORTIF (!trace, "tracing disabled");
+    if (measurealltimeinlib)
+      enter ();
+    core ();
+    if (abs (int_lit) <= (int) max_var)
+      res = vars[abs (int_lit)].core;
+    assert (!res || vars[abs (int_lit)].used);
+    if (measurealltimeinlib)
+      leave ();
+  }
 #else
-      ABORT ("compiled without trace support");
+  ABORT ("compiled without trace support");
 #endif
-    }
 
   return res;
+}
+
+int
+picosat_failed_assumption (int int_lit)
+{
+  Lit * lit;
+  Var * v;
+  ABORTIF (!int_lit, "API usage: zero literal as assumption");
+  check_ready ();
+  check_unsat_state ();
+  if (mtcls)
+    return 0;
+  assert (failed_assumption);
+  if (abs (int_lit) > (int) max_var)
+    return 0;
+  if (!extracted_all_failed_assumptions)
+    extract_all_failed_assumptions ();
+  lit = import_lit (int_lit);
+  v = LIT2VAR (lit);
+  return v->failed;
 }
 
 int
 picosat_usedlit (int int_lit)
 {
   int res;
-
-  ABORTIF (!int_lit, "zero literal");
+  check_ready ();
+  check_sat_or_unsat_or_unknown_state ();
+  ABORTIF (!int_lit, "API usage: zero literal can not be used");
   int_lit = abs (int_lit);
-  res = (int_lit <= max_var) ? vars[int_lit].used : 0;
+  res = (int_lit <= (int) max_var) ? vars[int_lit].used : 0;
   return res;
 }
 
@@ -6515,31 +6753,31 @@ picosat_write_rup_trace (FILE * file)
 size_t
 picosat_max_bytes_allocated (void)
 {
+  check_ready ();
   return max_bytes;
 }
 
 int
 picosat_variables (void)
 {
+  check_ready ();
   return (int) max_var;
 }
 
 int
 picosat_added_original_clauses (void)
 {
+  check_ready ();
   return (int) oadded;
 }
 
 void
 picosat_stats (void)
 {
-#ifdef STATS
   unsigned redlits;
-#ifndef NASS
+#ifdef STATS
+  check_ready ();
   assert (sdecisions + rdecisions + assumptions == decisions);
-#else
-  assert (sdecisions + rdecisions == decisions);
-#endif
 #endif
   if (calls > 1)
     fprintf (out, "%s%u calls\n", prefix, calls);
@@ -6558,9 +6796,9 @@ picosat_stats (void)
 #endif
   fputc ('\n', out);
 #ifdef STATS
-  fprintf (out,
-    "%sfl: %u = %.1f%% implicit, %llu oopsed, %llu tried, %llu skipped\n",
-    prefix,
+  fprintf (out, 
+    "%sfl: %u = %.1f%% implicit, %llu oopsed, %llu tried, %llu skipped\n", 
+    prefix, 
     ifailedlits, PERCENT (ifailedlits, failedlits),
     floopsed, fltried, flskipped);
 #endif
@@ -6581,9 +6819,7 @@ picosat_stats (void)
 #ifdef STATS
   fprintf (out, " (%u random = %.2f%%",
            rdecisions, PERCENT (rdecisions, decisions));
-#ifndef NASS
   fprintf (out, ", %u assumptions", assumptions);
-#endif
   fputc (')', out);
 #endif
   fputc ('\n', out);
@@ -6594,15 +6830,13 @@ picosat_stats (void)
 	   staticphasedecisions, PERCENT (staticphasedecisions, max_var));
 #endif
   fprintf (out, "%s%u fixed variables\n", prefix, fixed);
-#ifdef STATS
   assert (nonminimizedllits >= minimizedllits);
   redlits = nonminimizedllits - minimizedllits;
+  fprintf (out, "%s%u learned literals\n", prefix, llitsadded);
+  fprintf (out, "%s%.1f%% deleted literals\n",
+     prefix, PERCENT (redlits, nonminimizedllits));
 
-  fprintf (out,
-     "%s%u learned literals (%u redundant = %.1f%%)\n",
-     prefix, llitsadded,
-     redlits, PERCENT (redlits, nonminimizedllits));
-
+#ifdef STATS
 #ifndef NO_BINARY_CLAUSES
   fprintf (out,
 	   "%s%llu antecedents (%.1f antecedents per clause",
@@ -6620,21 +6854,37 @@ picosat_stats (void)
            prefix, propagations, AVERAGE (propagations, decisions));
   fprintf (out, "%s%llu visits (%.1f per propagation)\n",
 	   prefix, visits, AVERAGE (visits, propagations));
+  fprintf (out,
+           "%s%llu binary clauses visited (%.1f%% %.1f per propagation)\n",
+	   prefix, bvisits,
+	   PERCENT (bvisits, visits),
+	   AVERAGE (bvisits, propagations));
+  fprintf (out,
+           "%s%llu ternary clauses visited (%.1f%% %.1f per propagation)\n",
+	   prefix, tvisits,
+	   PERCENT (tvisits, visits),
+	   AVERAGE (tvisits, propagations));
+  fprintf (out,
+           "%s%llu large clauses visited (%.1f%% %.1f per propagation)\n",
+	   prefix, lvisits,
+	   PERCENT (lvisits, visits),
+	   AVERAGE (lvisits, propagations));
   fprintf (out, "%s%llu other true (%.1f%% of visited clauses)\n",
 	   prefix, othertrue, PERCENT (othertrue, visits));
-  fprintf (out,
+  fprintf (out, 
            "%s%llu other true in binary clauses (%.1f%%)"
 	   ", %llu upper (%.1f%%)\n",
            prefix, othertrue2, PERCENT (othertrue2, othertrue),
 	   othertrue2u, PERCENT (othertrue2u, othertrue2));
-  fprintf (out,
+  fprintf (out, 
            "%s%llu other true in large clauses (%.1f%%)"
 	   ", %llu upper (%.1f%%)\n",
            prefix, othertruel, PERCENT (othertruel, othertrue),
 	   othertruelu, PERCENT (othertruelu, othertruel));
-  fprintf (out, "%s%llu traversals (%.1f per visit)\n",
+  fprintf (out, "%s%llu ternary and large traversals (%.1f per visit)\n",
 	   prefix, traversals, AVERAGE (traversals, visits));
-
+  fprintf (out, "%s%llu large traversals (%.1f per large visit)\n",
+	   prefix, ltraversals, AVERAGE (ltraversals, lvisits));
   fprintf (out, "%s%llu assignments\n", prefix, assignments);
 #else
   fprintf (out, "%s%llu propagations\n", prefix, propagations);
@@ -6648,11 +6898,9 @@ picosat_stats (void)
 #ifdef STATS
   fprintf (out, "%s%.1f million visits per second\n",
 	   prefix, AVERAGE (visits / 1e6f, seconds));
-  fprintf (out, "%s%.1f million traversals per second\n",
-	   prefix, AVERAGE (traversals / 1e6f, seconds));
   fprintf (out,
-	   "%srecycled %.1f MB in %u reductions (%u forced)\n",
-	   prefix, rrecycled / (double) (1 << 20), reductions, freductions);
+	   "%srecycled %.1f MB in %u reductions\n",
+	   prefix, rrecycled / (double) (1 << 20), reductions);
   fprintf (out,
 	   "%srecycled %.1f MB in %u simplifications\n",
 	   prefix, srecycled / (double) (1 << 20), simps);
@@ -6690,6 +6938,7 @@ picosat_time_stamp (void)
 double
 picosat_seconds (void)
 {
+  check_ready ();
   return seconds;
 }
 
@@ -6706,11 +6955,11 @@ picosat_print (FILE * file)
 
   if (measurealltimeinlib)
     enter ();
+  else
+    check_ready ();
 
   n = 0;
-#ifndef NASS
   n +=  alshead - als;
-#endif
 
   for (p = SOC; p != EOC; p = NXC (p))
     {
@@ -6731,7 +6980,7 @@ picosat_print (FILE * file)
   for (lit = int2lit (1); lit <= last; lit++)
     {
       stack = LIT2IMPLS (lit);
-      eol = stack->top;
+      eol = stack->start + stack->count;
       for (q = stack->start; q < eol; q++)
 	if (*q >= lit)
 	  n++;
@@ -6766,20 +7015,18 @@ picosat_print (FILE * file)
   for (lit = int2lit (1); lit <= last; lit++)
     {
       stack = LIT2IMPLS (lit);
-      eol = stack->top;
+      eol = stack->start + stack->count;
       for (q = stack->start; q < eol; q++)
 	if ((other = *q) >= lit)
 	  fprintf (file, "%d %d 0\n", lit2int (lit), lit2int (other));
     }
 #endif
 
-#ifndef NASS
   {
     Lit **r;
     for (r = als; r < alshead; r++)
       fprintf (file, "%d 0\n", lit2int (*r));
   }
-#endif
 
   fflush (file);
 
@@ -6819,7 +7066,8 @@ picosat_changed (void)
 {
   int res;
 
-  ABORTIF (!assignments_and_failed_assumption_valid, "change status invalid");
+  check_ready ();
+  check_sat_state ();
 
   res = (min_flipped <= saved_max_var);
   assert (!res || saved_flips != flips);
@@ -6830,14 +7078,16 @@ picosat_changed (void)
 static void
 setemgr (void * nmgr)
 {
-  ABORTIF (emgr && emgr != nmgr, "mismatched external memory managers");
+  ABORTIF (emgr && emgr != nmgr,
+           "API usage: mismatched external memory managers");
   emgr = nmgr;
 }
 
 void
 picosat_set_new (void * nmgr, void * (*nnew)(void*,size_t))
 {
-  ABORTIF (state != INVALID_STATE, "'picosat_set_new' after 'picosat_init'");
+  ABORTIF (state != RESET,
+           "API usage: 'picosat_set_new' after 'picosat_init'");
   enew = nnew;
   setemgr (nmgr);
 }
@@ -6845,7 +7095,8 @@ picosat_set_new (void * nmgr, void * (*nnew)(void*,size_t))
 void
 picosat_set_resize (void * nmgr, void * (*nresize)(void*,void*,size_t,size_t))
 {
-  ABORTIF (state != INVALID_STATE, "'picosat_set_resize' after 'picosat_init'");
+  ABORTIF (state != RESET,
+           "API usage: 'picosat_set_resize' after 'picosat_init'");
   eresize = nresize;
   setemgr (nmgr);
 }
@@ -6853,7 +7104,8 @@ picosat_set_resize (void * nmgr, void * (*nresize)(void*,void*,size_t,size_t))
 void
 picosat_set_delete (void * nmgr, void (*ndelete)(void*,void*,size_t))
 {
-  ABORTIF (state != INVALID_STATE, "'picosat_set_delete' after 'picosat_init'");
+  ABORTIF (state != RESET,
+           "API usage: 'picosat_set_delete' after 'picosat_init'");
   edelete = ndelete;
   setemgr (nmgr);
 }
@@ -6861,6 +7113,7 @@ picosat_set_delete (void * nmgr, void (*ndelete)(void*,void*,size_t))
 void
 picosat_set_global_default_phase (int phase)
 {
+  check_ready ();
   GLOBAL_DEFAULT_PHASE = phase;
 }
 
@@ -6870,6 +7123,8 @@ picosat_set_default_phase_lit (int int_lit, int phase)
   unsigned newphase;
   Lit * lit;
   Var * v;
+
+  check_ready ();
 
   lit = import_lit (int_lit);
   v = LIT2VAR (lit);
@@ -6886,15 +7141,17 @@ picosat_set_default_phase_lit (int int_lit, int phase)
 
 #ifndef NADC
 
-unsigned
+unsigned 
 picosat_ado_conflicts (void)
 {
+  check_ready ();
   return adoconflicts;
 }
 
 void
 picosat_disable_ado (void)
 {
+  check_ready ();
   assert (!adodisabled);
   adodisabled = 1;
 }
@@ -6902,6 +7159,7 @@ picosat_disable_ado (void)
 void
 picosat_enable_ado (void)
 {
+  check_ready ();
   assert (adodisabled);
   adodisabled = 0;
 }
@@ -6909,6 +7167,7 @@ picosat_enable_ado (void)
 void
 picosat_set_ado_conflict_limit (unsigned newadoconflictlimit)
 {
+  check_ready ();
   adoconflictlimit = newadoconflictlimit;
 }
 

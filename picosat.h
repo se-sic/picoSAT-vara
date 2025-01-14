@@ -1,5 +1,5 @@
 /****************************************************************************
-Copyright (c) 2006 - 2008, Armin Biere, Johannes Kepler University.
+Copyright (c) 2006 - 2009, Armin Biere, Johannes Kepler University.
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to
@@ -32,9 +32,10 @@ IN THE SOFTWARE.
 /* These are the return values for 'picosat_sat' as for instance
  * standardized by the output format of the SAT competition.
  */
-#define PICOSAT_UNKNOWN		0
-#define PICOSAT_SATISFIABLE	10
-#define PICOSAT_UNSATISFIABLE	20
+#define PICOSAT_UNKNOWN         0
+#define PICOSAT_SATISFIABLE     10
+#define PICOSAT_UNSATISFIABLE   20
+
 /*------------------------------------------------------------------------*/
 /* Global variables for configurability
  */
@@ -65,8 +66,8 @@ void picosat_set_delete (void *, void (*)(void *, void *, size_t));
 
 /*------------------------------------------------------------------------*/
 
-void picosat_init (void);		/* constructor */
-void picosat_reset (void);		/* destructor */
+void picosat_init (void);               /* constructor */
+void picosat_reset (void);              /* destructor */
 
 /*------------------------------------------------------------------------*/
 /* The following five functions are essentially parameters to 'init', and
@@ -189,11 +190,11 @@ void picosat_adjust (int max_idx);
 /*------------------------------------------------------------------------*/
 /* Statistics.
  */
-int picosat_variables (void);				/* p cnf <m> n */
-int picosat_added_original_clauses (void);		/* p cnf m <n> */
+int picosat_variables (void);                           /* p cnf <m> n */
+int picosat_added_original_clauses (void);              /* p cnf m <n> */
 size_t picosat_max_bytes_allocated (void);
-double picosat_time_stamp (void);			/* ... in process */
-void picosat_stats (void);				/* > output file */
+double picosat_time_stamp (void);                       /* ... in process */
+void picosat_stats (void);                              /* > output file */
 
 /* The time spent in the library or in 'picosat_sat'.  The former is only
  * returned if, right after initialization 'picosat_measure_all_calls'
@@ -212,10 +213,85 @@ void picosat_add (int lit);
  */
 void picosat_print (FILE *);
 
-/* You can add arbitrary many assertions before the next 'picosat_sat'.
- * An assumption is only valid for the next 'picosat_sat' and will be taken
- * back afterwards.  Adding a new assumption will reset the previous
- * assignment.
+/* You can add arbitrary many assumptions before the next 'picosat_sat'.
+ * This is similar to the using assumptions in MiniSAT, except that you do
+ * not have to collect all your assumptions yourself.  In PicoSAT you can
+ * add one after the other before the next call to 'picosat_sat'.
+ *
+ * These assumptions can be seen as adding unit clauses with those
+ * assumptions as literals.  However these assumption clauses are only valid
+ * for exactly the next call to 'picosat_sat'.  And will be removed
+ * afterwards, e.g. in future calls to 'picosat_sat' after the next one they
+ * are not assumed, unless they are assumed again trough 'picosat_assume'.
+ *
+ * More precisely, assumptions actually remain valid even after the next
+ * call to 'picosat_sat' returns.  Valid means they remain 'assumed' until a
+ * call to 'picosat_add', 'picosat_assume', or another 'picosat_sat,
+ * following the first 'picosat_sat'.  They need to stay valid for
+ * 'picosat_failed_assumption' to return correct values.  
+ *
+ * Example:
+ *
+ *   picosat_assume (1);        // assume unit clause '1 0'
+ *   picosat_assume (-2);       // additionally assume clause '-2 0'
+ *   res = picosat_sat (1000);  // assumes 1 and -2 to hold
+ *                              // 1000 decisions max.
+ *
+ *   if (res == PICOSAT_UNSATISFIABLE) 
+ *     {
+ *       if (picosat_failed_assumption (1))
+ *         // unit clause '1 0' was necessary to derive UNSAT
+ *
+ *       if (picosat_failed_assumption (-2))
+ *         // unit clause '-2 0' was necessary to derive UNSAT
+ *
+ *       // at least one but also both could be necessary
+ *
+ *       picosat_assume (17);  // previous assumptions are removed
+ *                             // now assume unit clause '17 0' for
+ *                             // the next call to 'picosat_sat'
+ *
+ *       // adding a new clause, actually the first literal of
+ *       // a clause would also make the assumptions used in the previous
+ *       // call to 'picosat_sat' invalid.
+ *
+ *       // The first two assumptions above are not assumed anymore.  Only
+ *       // the assumptions, since the last call to 'picosat_sat' returned
+ *       // are assumed, e.g. the unit clause '17 0'.
+ *
+ *       res = picosat_sat (-1);
+ *     }
+ *   else if (res == PICOSAT_SATISFIABLE)
+ *     {
+ *       // now the assignment is valid and we can call 'picosat_deref'
+ *
+ *       assert (picosat_deref (1) == 1));
+ *       assert (picosat_deref (-2) == 1));
+ *
+ *       val = picosat_deref (15);
+ *
+ *       // previous two assumptions are still valid
+ *
+ *       // would become invalid if 'picosat_add' or 'picosat_assume' is
+ *       // called here, but we immediately call 'picosat_sat'.  Now when
+ *       // entering 'picosat_sat' the solver nows that the previous call
+ *       // returned SAT and it can savely reset the previous assumptions
+ *
+ *       res = picosat_sat (-1);
+ *     }
+ *   else
+ *     {
+ *       assert (res == PICOSAT_UNKNOWN);
+ *
+ *       // assumptions valid, but assignment invalid
+ *       // except for top level assigned literals which
+ *       // necessarily need to have this value if the formula is SAT
+ *
+ *       // as above the solver nows that the previous call returned UNKWOWN
+ *       // and will before doing anything else reset assumptions
+ *
+ *       picosat_sat (-1);
+ *     }
  */
 void picosat_assume (int lit);
 
@@ -230,7 +306,7 @@ void picosat_assume (int lit);
 void picosat_add_ado_lit (int);
 
 /*------------------------------------------------------------------------*/
-/* Call the main SAT routine.  A negative decision limits sets no limit on
+/* Call the main SAT routine.  A negative decision limit sets no limit on
  * the number of decisions.  The return values are as above, e.g.
  * 'PICOSAT_UNSATISFIABLE', 'PICOSAT_SATISFIABLE', or 'PICOSAT_UNKNOWN'.
  */
@@ -254,6 +330,16 @@ int picosat_deref_toplevel (int lit);
  * added or derived.
  */
 int picosat_inconsistent  (void);
+
+/* Returns non zero if the literal is a failed assumption, which is defined
+ * as an assumption used to derive unsatisfiability.  This is as accurate as
+ * generating core literals, but still of course is an overapproximation of
+ * the set of assumptions really necessary.  The technique does not need
+ * clausal core generation nor tracing to be enabled and thus can be much
+ * more effectice.  The function can only called as long the current
+ * assumptions are valid.  See 'picosat_assume' for more details.
+ */
+int picosat_failed_assumption (int lit);
 
 /*------------------------------------------------------------------------*/
 /* Assume that a previous call to 'picosat_sat' in incremental usage,
