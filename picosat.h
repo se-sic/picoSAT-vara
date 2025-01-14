@@ -1,5 +1,5 @@
 /****************************************************************************
-Copyright (c) 2006 - 2010, Armin Biere, Johannes Kepler University.
+Copyright (c) 2006 - 2012, Armin Biere, Johannes Kepler University.
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to
@@ -38,8 +38,17 @@ IN THE SOFTWARE.
 /*------------------------------------------------------------------------*/
 /* Global variables for configurability
  */
+enum Phase
+{
+ POSPHASE,
+ NEGPHASE,
+ JWLPHASE,
+ RNDPHASE,
+};
 
-extern __attribute__((feature_variable("DefaultPhase"))) int GLOBAL_DEFAULT_PHASE;
+extern __attribute__((feature_variable("DefaultPhase"))) enum Phase GLOBAL_DEFAULT_PHASE;
+extern __attribute__((feature_variable("AllSat"))) int ALLSAT;
+extern __attribute__((feature_variable("Partial"))) int PARTIAL;
 extern __attribute__((feature_variable("CompactTrace"))) const char * COMPACT_TRACE_NAME;
 extern __attribute__((feature_variable("ExtendedTrace"))) const char * EXTENDED_TRACE_NAME;
 extern __attribute__((feature_variable("RUPTrace"))) const char * RUP_TRACE_NAME;
@@ -80,7 +89,7 @@ void picosat_set_output (FILE *);
 
 /* Measure all time spent in all calls in the solver.  By default only the
  * time spent in 'picosat_sat' is measured.  Enabling this function may for
- * instance tripple the time needed to add large CNFs, since every call to
+ * instance triple the time needed to add large CNFs, since every call to
  * 'picosat_add' will trigger a call to 'getrusage'.
  */
 void picosat_measure_all_calls (void);
@@ -90,11 +99,6 @@ void picosat_measure_all_calls (void);
  */
 void picosat_set_prefix (const char *);
 
-/* The function 'picosat_set_incremental_rup_file' produces
- * a proof trace in RUP format on the fly.  The resulting RUP file may
- * contain learned clauses that are not actual in the clausal core.
- */
-
 /* Set verbosity level.  A verbosity level of 1 and above prints more and
  * more detailed progress reports on the output file, set by
  * 'picosat_set_output'.  Verbose messages are prefixed with the string set
@@ -102,7 +106,7 @@ void picosat_set_prefix (const char *);
  */
 void picosat_set_verbosity (int new_verbosity_level);
 
-/* Set default initial phase:
+/* Set default initial phase: 
  *
  *   0 = false
  *   1 = true
@@ -111,7 +115,7 @@ void picosat_set_verbosity (int new_verbosity_level);
  *
  * After a variable has been assigned the first time, it will always
  * be assigned the previous value if it is picked as decision variable.
- * The initial assignment can be choosen with this function.
+ * The initial assignment can be chosen with this function.
  */
 void picosat_set_global_default_phase (int);
 
@@ -135,9 +139,9 @@ void picosat_set_default_phase_lit (int lit, int phase);
  */
 void picosat_reset_phases (void);
 
-/* Scores can be erased as well.  Not however, that even after erasing 
+/* Scores can be erased as well.  Note, however, that even after erasing
  * scores and phases, learned clauses are kept.  In addition head tail
- * pointers for literals are not moved either.  So expect to be a difference
+ * pointers for literals are not moved either.  So expect a difference
  * between calling the solver in incremental mode or with a fresh copy of
  * the CNF.
  */
@@ -180,10 +184,10 @@ void picosat_set_seed (unsigned random_number_generator_seed);
  *
  * NOTE, trace generation code is not necessarily included, e.g. if you
  * configure picosat with full optimzation as './configure -O' or with
- * './configure --no-trace'.  This speeds up the solver slightly.  Then you
+
  * you do not get any results by trying to generate traces.
  *
- * The return value is non-zero if code for generating traces is including
+ * The return value is non-zero if code for generating traces is included
  * and it is zero if traces can not be generated.
  */
 int picosat_enable_trace_generation (void);
@@ -196,6 +200,11 @@ int picosat_enable_trace_generation (void);
  */
 void picosat_set_incremental_rup_file (FILE * file, int m, int n);
 
+/* Save original clauses for 'picosat_deref_partial'.  See comments to that
+ * function further down.
+ */
+void picosat_save_original_clauses (void);
+
 /*------------------------------------------------------------------------*/
 /* This function returns the next available unused variable index and
  * allocates a variable for it even though this variable does not occur as
@@ -204,6 +213,51 @@ void picosat_set_incremental_rup_file (FILE * file, int m, int n);
  * this variable is treated as if it had been used.
  */
 int picosat_inc_max_var (void);
+
+/*------------------------------------------------------------------------*/
+/* Push/pop semantics for PicoSAT.   'picosat_push' opens up a new context.
+ * All clauses added in this context are attached to it and discared when
+ * the context is closed with 'picosat_pop'.  It is also possible to
+ * nest contexts.
+ *
+ * The current implementation uses a new internal variable for each context.
+ * However, the indices for these internal variables are shared with
+ * ordinary external variables.  This means that after any call to
+ * 'picosat_push', new variable indices should be obtained with
+ * 'picosat_inc_max_var' and not just by incrementing the largest variable
+ * index used so far.
+ *
+ * The return value is the index of the literal that assumes this context.
+ * This literal can only be used for 'picosat_failed_context' otherwise
+ * it will lead to an API usage error.
+ */
+int picosat_push (void);
+
+/* This is as 'picosat_failed_assumption', but only for internal variables
+ * generated by 'picosat_push'.
+ */
+int picosat_failed_context (int lit);
+
+/* Returns the literal that assumes the current context or zero if the
+ * outer context has been reached.
+ */
+int picosat_context (void);
+
+/* Closes the current context and recycles the literal generated for
+ * assuming this context.  The return value is the literal for the new
+ * outer context or zero if the outer most context has been reached.
+ */
+int picosat_pop (void);
+
+/* Force immmediate removal of all satisfied clauses and clauses that are
+ * added or generated in closed contexts.  This function is called
+ * internally if enough units are learned or after a certain number of
+ * contexts have been closed.  This number is fixed at compile time
+ * and defined as MAXCILS in 'picosat.c'.
+ *
+ * Note that learned clauses which only involve outer contexts are kept.
+ */
+void picosat_simplify (void);
 
 /*------------------------------------------------------------------------*/
 /* If you know a good estimate on how many variables you are going to use
@@ -223,6 +277,8 @@ size_t picosat_max_bytes_allocated (void);
 double picosat_time_stamp (void);                       /* ... in process */
 void picosat_stats (void);                              /* > output file */
 unsigned long long picosat_propagations (void);		/* #propagations */
+unsigned long long picosat_decisions (void);		/* #decisions */
+unsigned long long picosat_visits (void);		/* #visits */
 
 /* The time spent in the library or in 'picosat_sat'.  The former is only
  * returned if, right after initialization 'picosat_measure_all_calls'
@@ -237,6 +293,17 @@ double picosat_seconds (void);
  * this literal respectively the trailing zero belong starting at 0.
  */
 int picosat_add (int lit);
+
+/* As the previous function, but allows to add a full clause at once with an
+ * at compiled time known size.  The list of argument literals has to be
+ * terminated with a zero literal.  Literals beyond the first zero literal
+ * are discarded.
+ */
+int picosat_add_arg (int lit, ...);
+
+/* As the previous function but with an at compile time unknown size.
+ */
+int picosat_add_lits (int * lits);
 
 /* Print the CNF to the given file in DIMACS format.
  */
@@ -303,8 +370,8 @@ void picosat_print (FILE *);
  *
  *       // would become invalid if 'picosat_add' or 'picosat_assume' is
  *       // called here, but we immediately call 'picosat_sat'.  Now when
- *       // entering 'picosat_sat' the solver nows that the previous call
- *       // returned SAT and it can savely reset the previous assumptions
+ *       // entering 'picosat_sat' the solver knows that the previous call
+ *       // returned SAT and it can safely reset the previous assumptions
  *
  *       res = picosat_sat (-1);
  *     }
@@ -342,7 +409,8 @@ void picosat_add_ado_lit (int);
 int picosat_sat (int decision_limit);
 
 /* As alternative to a decision limit you can use the number of propagations
- * as limit.  This is more linearly related to execution time.
+ * as limit.  This is more linearly related to execution time. This has to
+ * be called after 'picosat_init' and before 'picosat_sat'.
  */
 void picosat_set_propagation_limit (unsigned long long limit);
 
@@ -364,6 +432,15 @@ int picosat_deref (int lit);
  */
 int picosat_deref_toplevel (int lit);
 
+/* After 'picosat_sat' was called and returned 'PICOSAT_SATISFIABLE' a
+ * partial satisfying assignment can be obtained as well.  It satisfies all
+ * original clauses literals.  The value of the literal is return as '1' for
+ * 'true',  '-1' for 'false' and '0' for an unknown value.  In order to make
+ * this work all original clauses have to be saved internally, which has to
+ * be enabled by 'picosat_save_original_clauses'.
+ */
+int picosat_deref_partial (int lit);
+
 /* Returns non zero if the CNF is unsatisfiable because an empty clause was
  * added or derived.
  */
@@ -374,7 +451,7 @@ int picosat_inconsistent  (void);
  * generating core literals, but still of course is an overapproximation of
  * the set of assumptions really necessary.  The technique does not need
  * clausal core generation nor tracing to be enabled and thus can be much
- * more effectice.  The function can only be called as long the current
+ * more effective.  The function can only be called as long the current
  * assumptions are valid.  See 'picosat_assume' for more details.
  */
 int picosat_failed_assumption (int lit);
@@ -391,11 +468,11 @@ const int * picosat_failed_assumptions (void);
  * function or 'picosat_sat' or 'picosat_mus_assumptions'.  It only makes sense
  * if the last call to 'picosat_sat' returned 'PICOSAT_UNSATISFIABLE'.
  *
- * The
- * call back function is called for all succesful simplification attempts.  The
- * first argument of the call back function is the state given as first
- * argument to 'picosat_mus_assumptions'.  The second argument to the call back
- * function is the new reduced list of failed assumptions.
+ * The call back function is called for all successful simplification
+ * attempts.  The first argument of the call back function is the state
+ * given as first argument to 'picosat_mus_assumptions'.  The second
+ * argument to the call back function is the new reduced list of failed
+ * assumptions.
  *
  * This function will call 'picosat_assume' and 'picosat_sat' internally but
  * before returning reestablish a proper UNSAT state, e.g.
@@ -406,6 +483,81 @@ const int * picosat_failed_assumptions (void);
  * if it turns out to be redundant it is permanently assumed to be false.
  */
 const int * picosat_mus_assumptions (void *, void(*)(void*,const int*),int);
+
+/* Compute one maximal subset of satisfiable assumptions.  You need to set
+ * the assumptions, call 'picosat_sat' and check for 'picosat_inconsistent',
+ * before calling this function.  The result is a zero terminated array of
+ * assumptions that consistently can be asserted at the same time.  Before
+ * returing the library 'reassumes' all assumptions.
+ *
+ * It could be beneficial to set the default phase of assumptions
+ * to true (positive).  This can speed up the computation.
+ */
+const int * picosat_maximal_satisfiable_subset_of_assumptions (void);
+
+/* This function assumes that you have set up all assumptions with
+ * 'picosat_assume'.  Then it calls 'picosat_sat' internally unless the
+ * formula is already inconsistent without assumptions, i.e.  it contains
+ * the empty clause.  After that it extracts a maximal satisfiable subset of
+ * assumptions.
+ *
+ * The result is a zero terminated maximal subset of consistent assumptions
+ * or a zero pointer if the formula contains the empty clause and thus no
+ * more maximal consistent subsets of assumptions can be extracted.  In the
+ * first case, before returning, a blocking clause is added, that rules out
+ * the result for the next call.
+ *
+ * NOTE: adding the blocking clause changes the CNF.
+ *
+ * So the following idiom
+ *
+ * const int * mss;
+ * picosat_assume (a1);
+ * picosat_assume (a2);
+ * picosat_assume (a3);
+ * picosat_assume (a4);
+ * while ((mss = picosat_next_maximal_satisfiable_subset_of_assumptions ()))
+ *   process_mss (mss);
+ *
+ * can be used to iterate over all maximal consistent subsets of
+ * the set of assumptions {a1,a2,a3,a4}.
+ *
+ *
+ * It could be beneficial to set the default phase of assumptions
+ * to true (positive).  This can speed up the computation.
+ */
+const int * picosat_next_maximal_satisfiable_subset_of_assumptions (void);
+
+/* Similarly we can iterate over all minimal correcting assumption sets.
+ * See the CAMUS literature [M. Liffiton, K. Sakallah JAR 2008].
+ *
+ * The result contains each assumed literal only once, even if it
+ * was assumed multiple times (in contrast to the maximal consistent
+ * subset functions above).
+ *
+ * It could be beneficial to set the default phase of assumptions
+ * to true (positive).  This may speed up the computation.
+ */
+const int * picosat_next_minimal_correcting_subset_of_assumptions (void);
+
+/* Compute the union of all minmal correcting sets, which is called
+ * the 'high level union of all minimal unsatisfiable subset sets'.
+ *
+ * It uses 'picosat_next_minimal_correcting_subset_of_assumptions' and
+ * the same notes and advices apply.  In particular, this implies that
+ * after calling the function once, the current CNF becomes inconsistent,
+ * and PicoSAT has to be reset.  So even this function internally uses
+ * PicoSAT incrementally, it can not be used incrementally itself at this
+ * point.
+ *
+ * The 'callback' can be used for progress logging and is called after
+ * each extracted minimal correcting set if non zero.  The 'nhumus'
+ * parameter of 'callback' denotes the number of assumptions found to be
+ * part of the HUMUS sofar.
+ */
+const int * picosat_humus (void (*callback)(void * state,
+                                            int nmcs, int nhumus),
+			   void * state);
 
 /*------------------------------------------------------------------------*/
 /* Assume that a previous call to 'picosat_sat' in incremental usage,
@@ -449,7 +601,7 @@ int picosat_changed (void);
 int picosat_coreclause (int i);
 
 /* This function gives access to the variable core, which is made up of the
- * variables that were resolved in deriving the empty clauses.
+ * variables that were resolved in deriving the empty clause.
  */
 int picosat_corelit (int lit);
 

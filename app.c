@@ -6,6 +6,7 @@
 #include <stdio.h>
 
 #define GUNZIP "gunzip -c %s"
+#define BUNZIP2 "bzcat %s"
 #define GZIP "gzip -c -f > %s"
 
 FILE * popen (const char *, const char*);
@@ -22,35 +23,15 @@ static char buffer[100];
 static char *bhead = buffer;
 static const char *eob = buffer + 80;
 static FILE * incremental_rup_file;
+static signed char * sol;
 
 extern void picosat_enter (void);
 extern void picosat_leave (void);
 
-static char page[4096];
-static char * top;
-static char * end;
-
 static int
 next (void)
 {
-  size_t bytes;
-  int res;
-
-  if (top == end)
-    {
-      if (end < page + sizeof page)
-	return EOF;
-
-      bytes = fread (page, 1, sizeof page, input);
-      if (bytes == 0)
-	return EOF;
-
-      top = page;
-      end = page + bytes;
-    }
-
-  res = *top++;
-
+  int res = getc (input);
   if (res == '\n')
     lineno++;
 
@@ -216,21 +197,49 @@ REENTER:
 }
 
 static void
-printa (void)
+printa (int partial)
 {
-  int max_idx = picosat_variables (), i, lit;
+  int max_idx = picosat_variables (), i, lit, val;
 
   assert (bhead == buffer);
 
   for (i = 1; i <= max_idx; i++)
     {
-      lit = (picosat_deref (i) > 0) ? i : -i;
+      if (partial)
+	{
+	  val = picosat_deref_partial (i);
+	  if (!val)
+	    continue;
+	}
+      else
+	val = picosat_deref (i);
+      lit = (val > 0) ? i : -i;
       printi (lit);
     }
 
   printi (0);
   if (bhead > buffer)
     bflush ();
+}
+
+static void
+blocksol (void)
+{
+  int max_idx = picosat_variables (), i;
+
+  if (!sol)
+    {
+      sol = malloc (max_idx + 1);
+      memset (sol, 0, max_idx + 1);
+    }
+
+  for (i = 1; i <= max_idx; i++)
+    sol[i] = (picosat_deref (i) > 0) ? 1 : -1;
+
+  for (i = 1; i <= max_idx; i++)
+    picosat_add ((sol[i] < 0) ? i : -i);
+
+  picosat_add (0);
 }
 
 static int
@@ -375,20 +384,24 @@ write_to_file (const char *name, const char *type, void (*writer) (FILE *))
 "  -U <core>    generate file listing used variables\n" \
 "  -A <core>    generate file listing failed assumptions\n" \
 "\n" \
+"  --all        enumerate all solutions\n" \
+"  --partial    generate and print only partial assignment\n" \
+"\n" \
 "and <input> is an optional input file in DIMACS format.\n"
 
 int
 picosat_main (int argc, char **argv)
 {
   int res, done, err, print_satisfying_assignment, force, print_formula;
-  const char * clausal_core_name, * variable_core_name;
   int assumption, assumptions;
+  const char * clausal_core_name, * variable_core_name;
   const char *input_name, *output_name;
   const char * failed_assumptions_name;
   int close_input, pclose_input;
   long long propagation_limit;
   int i, decision_limit;
   double start_time;
+  long long sols;
   unsigned seed;
   FILE *file;
   int trace;
@@ -418,10 +431,11 @@ picosat_main (int argc, char **argv)
   GLOBAL_DEFAULT_PHASE = 2;
   assumptions = 0;
   force = 0;
+  ALLSAT = 0;
+  PARTIAL = 0;
   trace = 0;
   seed = 0;
-
-  top = end = page + sizeof page;
+  sols= 0;
 
   print_satisfying_assignment = 1;
   print_formula = 0;
@@ -454,6 +468,10 @@ picosat_main (int argc, char **argv)
       else if (!strcmp (argv[i], "-n"))
 	{
 	  print_satisfying_assignment = 0;
+	}
+      else if (!strcmp (argv[i], "--partial"))
+	{
+	  PARTIAL = 1;
 	}
       else if (!strcmp (argv[i], "-p"))
 	{
@@ -514,6 +532,10 @@ picosat_main (int argc, char **argv)
 	       */
 	      assumptions++;
 	    }
+	}
+      else if (!strcmp (argv[i], "--all"))
+	{
+	  ALLSAT = 1;
 	}
       else if (!strcmp (argv[i], "-s"))
 	{
@@ -737,6 +759,25 @@ picosat_main (int argc, char **argv)
 	    }
 	  free (cmd);
 	}
+      else if (has_suffix (argv[i], ".bz2"))
+	{
+	  char *cmd = malloc (strlen (BUNZIP2) + strlen (argv[i]));
+	  sprintf (cmd, BUNZIP2, argv[i]);
+	  if ((file = popen (cmd, "r")))
+	    {
+	      input_name = argv[i];
+	      pclose_input = 1;
+	      input = file;
+	    }
+	  else
+	    {
+	      fprintf (output,
+		       "*** picosat: "
+		       "can not read compressed input file '%s'\n", argv[i]);
+	      err = 1;
+	    }
+	  free (cmd);
+	}
       else if (!(file = fopen (argv[i], "r")))	/* TODO .gz ? */
 	{
 	  fprintf (output,
@@ -749,6 +790,13 @@ picosat_main (int argc, char **argv)
 	  close_input = 1;
 	  input = file;
 	}
+    }
+
+  if (ALLSAT && PARTIAL)
+    {
+      fprintf (output,
+	       "*** picosat: can not combine '--all' and '--partial'");
+      err = 1;
     }
 
   res = PICOSAT_UNKNOWN;
@@ -788,7 +836,6 @@ picosat_main (int argc, char **argv)
 	{
 	  if (verbose)
 	    fprintf (output, "c using %d as default phase\n", GLOBAL_DEFAULT_PHASE);
-
 	  picosat_set_global_default_phase (GLOBAL_DEFAULT_PHASE);
 	}
 
@@ -801,8 +848,20 @@ picosat_main (int argc, char **argv)
 	    (unsigned long long) propagation_limit);
 	}
 
+      if (PARTIAL)
+	{
+	  if (verbose)
+	    fprintf (output, 
+	      "c saving original clauses for partial assignment\n");
+
+	  picosat_save_original_clauses ();
+	}
+
       if (verbose)
 	fprintf (output, "c\nc parsing %s\n", input_name);
+
+      if (verbose)
+	fflush (output);
 
       if ((err_msg = parse (force)))
 	{
@@ -811,6 +870,7 @@ picosat_main (int argc, char **argv)
 	}
       else
 	{
+NEXT_SOLUTION:
 	  if (assumptions)
 	    {
 	      i = 0;
@@ -850,7 +910,13 @@ picosat_main (int argc, char **argv)
 
 	      if (res == PICOSAT_UNSATISFIABLE)
 		{
-		  fputs ("s UNSATISFIABLE\n", output);
+
+		  if (ALLSAT)
+		    fprintf (output, "s SOLUTIONS %lld\n", sols);
+		  else
+		    fputs ("s UNSATISFIABLE\n", output);
+
+		  fflush (output);
 
 		  if (COMPACT_TRACE_NAME)
 		    write_to_file (COMPACT_TRACE_NAME,
@@ -883,13 +949,38 @@ picosat_main (int argc, char **argv)
 		}
 	      else if (res == PICOSAT_SATISFIABLE)
 		{
-		  fputs ("s SATISFIABLE\n", output);
+	          if (ALLSAT)
+		    {
+		      sols++;
+		      if (verbose)
+			fprintf (output, "c\nc solution %lld\nc\n", sols);
+		    }
+
+		  if (!ALLSAT || print_satisfying_assignment)
+		    fputs ("s SATISFIABLE\n", output);
+
+		  if (!ALLSAT || verbose || print_satisfying_assignment)
+		    fflush (output);
 
 		  if (print_satisfying_assignment)
-		    printa ();
+		    printa (PARTIAL);
+
+		  if (ALLSAT)
+		    {
+		      blocksol ();
+		      goto NEXT_SOLUTION;
+		    }
 		}
 	      else
-		fputs ("s UNKNOWN\n", output);
+		{
+		  fputs ("s UNKNOWN\n", output);
+
+		  if (ALLSAT && verbose)
+		    fprintf (output,
+			     "c\nc limit reached after %lld solutions\n",
+			     sols);
+		  fflush (output);
+		}
 	    }
 	}
 
@@ -900,6 +991,12 @@ picosat_main (int argc, char **argv)
 	  fprintf (output,
 	           "c %.1f seconds total run time\n",
 		   picosat_time_stamp () - start_time);
+	}
+
+      if (sol)
+	{
+	  free (sol);
+	  sol = 0;
 	}
 
       picosat_leave ();
