@@ -1,5 +1,12 @@
-news for release 954 since 951
+news for release 957 since 953
 ------------------------------
+
+* fixed unitialized memory access problem for 'picosat_deref_partial'
+  and another issue with partial models
+
+* added 'picosat_add_arg' and 'picosat_add_lits'
+
+* '--plain' and 'picosat_set_plain' to disable failed literal probing
 
 * new '#define PICOSAT_REENTRANT_API' in 'picosat.h'
 

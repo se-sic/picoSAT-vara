@@ -59,6 +59,7 @@ enum Phase
 extern __attribute__((feature_variable("DefaultPhase"))) enum Phase GLOBAL_DEFAULT_PHASE;
 extern __attribute__((feature_variable("AllSat"))) int ALLSAT;
 extern __attribute__((feature_variable("Partial"))) int PARTIAL;
+extern __attribute__((feature_variable("Plain"))) int PLAIN;
 extern __attribute__((feature_variable("CompactTrace"))) const char * COMPACT_TRACE_NAME;
 extern __attribute__((feature_variable("ExtendedTrace"))) const char * EXTENDED_TRACE_NAME;
 extern __attribute__((feature_variable("RUPTrace"))) const char * RUP_TRACE_NAME;
@@ -127,7 +128,14 @@ void picosat_set_prefix (PicoSAT *, const char *);
  */
 void picosat_set_verbosity (PicoSAT *, int new_verbosity_level);
 
-/* Set default initial phase: 
+/* Disable/Enable all pre-processing, currently only failed literal probing.
+ *
+ *  new_plain_value != 0    only 'plain' solving, so no preprocessing
+ *  new_plain_value == 0    allow preprocessing
+ */
+void picosat_set_plain (PicoSAT *, int new_plain_value);
+
+/* Set default initial phase:
  *
  *   0 = false
  *   1 = true
@@ -258,7 +266,7 @@ int picosat_failed_context (PicoSAT *, int lit);
 /* Returns the literal that assumes the current context or zero if the
  * outer context has been reached.
  */
-int picosat_context (PicoSAT *);
+int picosat_context (PicoSAT *);	
 
 /* Closes the current context and recycles the literal generated for
  * assuming this context.  The return value is the literal for the new
@@ -316,7 +324,7 @@ int picosat_add (PicoSAT *, int lit);
  * terminated with a zero literal.  Literals beyond the first zero literal
  * are discarded.
  */
-int picosat_add_arg (PicoSAT *, int lit, ...);
+int picosat_add_arg (PicoSAT *, ...);
 
 /* As the previous function but with an at compile time unknown size.
  */
@@ -451,10 +459,10 @@ int picosat_deref_toplevel (PicoSAT *, int lit);
 
 /* After 'picosat_sat' was called and returned 'PICOSAT_SATISFIABLE' a
  * partial satisfying assignment can be obtained as well.  It satisfies all
- * original clauses literals.  The value of the literal is return as '1' for
- * 'true',  '-1' for 'false' and '0' for an unknown value.  In order to make
- * this work all original clauses have to be saved internally, which has to
- * be enabled by 'picosat_save_original_clauses'.
+ * original clauses.  The value of the literal is return as '1' for 'true',
+ * '-1' for 'false' and '0' for an unknown value.  In order to make this
+ * work all original clauses have to be saved internally, which has to be
+ * enabled by 'picosat_save_original_clauses' right after initialization.
  */
 int picosat_deref_partial (PicoSAT *, int lit);
 
@@ -544,7 +552,7 @@ const int * picosat_maximal_satisfiable_subset_of_assumptions (PicoSAT *);
  * It could be beneficial to set the default phase of assumptions
  * to true (positive).  This can speed up the computation.
  */
-const int *
+const int * 
 picosat_next_maximal_satisfiable_subset_of_assumptions (PicoSAT *);
 
 /* Similarly we can iterate over all minimal correcting assumption sets.
