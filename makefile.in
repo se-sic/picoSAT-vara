@@ -33,6 +33,9 @@ picomcs.o: picomcs.c picosat.h makefile
 picomus.o: picomus.c picosat.h makefile
 	$(CC) $(CFLAGS) -c $<
 
+picogcnf.o: picogcnf.c picosat.h makefile
+	$(CC) $(CFLAGS) -c $<
+
 main.o: main.c picosat.h makefile
 	$(CC) $(CFLAGS) -c $<
 

@@ -1,3 +1,9 @@
+news for release 953 since 951
+------------------------------
+
+* added manager so no more global variables
+  (allows multiple instances, requires manager object)
+
 news for release 951 since 941
 ------------------------------
 

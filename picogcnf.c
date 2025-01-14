@@ -36,6 +36,8 @@ IN THE SOFTWARE.
 
 static int reductions, ngroups;
 
+static PicoSAT * ps;
+
 static void die (const char * fmt, ...) {
   va_list ap;
   fprintf (stderr, "*** picogcnf: ");
@@ -75,7 +77,7 @@ int main (int argc, char ** argv) {
   FILE * file;
   if (argc != 2) die ("usage: picogcnf <gcnf-file>");
   if (!(file = fopen (argv[1], "r"))) die ("can not read '%s'", argv[1]);
-  picosat_init ();
+  ps = picosat_init ();
 HEADER:
   ch = getc (file);
   if (ch == 'c') {
@@ -115,7 +117,7 @@ LIT:
       group = INT_MAX;
       nclauses++;
     }
-    picosat_add (lit);
+    picosat_add (ps, lit);
   } else if (ch == '{') {
     if (nclauses == sclauses) die ("too many clauses");
     if (group < INT_MAX) die ("multiple groups per clause");
@@ -131,21 +133,21 @@ GROUP:
       ch = getc (file);
     if (ch != '}') die ("expected '}'");
     LOG ("{%d} ", group);
-    if (group) picosat_add (-(nvars + group));
+    if (group) picosat_add (ps, -(nvars + group));
     lit = INT_MAX;
   } else die ("expected '{'");
   goto LIT;
 DONE:
   fclose (file);
-  for (lit = nvars + 1; lit <= nvars + ngroups; lit++) picosat_assume (lit);
-  res = picosat_sat (-1);
+  for (lit = nvars + 1; lit <= nvars + ngroups; lit++) picosat_assume (ps, lit);
+  res = picosat_sat (ps, -1);
   msg ("first call to SAT solver returned");
   if (res == 10) printf ("s SATISFIABLE\n");
   else if (res == 20) printf ("s UNSATISFIABLE\n");
   else printf ("s UNKNOWN\n");
   fflush (stdout);
   if (res == 20) {
-    mus = picosat_mus_assumptions (0, callback, 1);
+    mus = picosat_mus_assumptions (ps, 0, callback, 1);
     assert (mus);
     printf ("v");
     for (p = mus; (lit = *p); p++) {
@@ -156,8 +158,8 @@ DONE:
     fflush (stdout);
   }
   msg ("max memory %.1f MB",
-       picosat_max_bytes_allocated () / (double)(1<<20));
-  picosat_reset ();
+       picosat_max_bytes_allocated (ps) / (double)(1<<20));
+  picosat_reset (ps);
   msg ("%d reductions", reductions);
   return res;
 }
